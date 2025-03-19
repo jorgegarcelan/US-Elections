@@ -28,10 +28,10 @@ Los datos provienen de diversas fuentes, incluyendo:
  │   ├── unsupervised.ipynb # Métodos no supervisados para análisis
 ```
 
-## 🏆 Resultados
-📌 **Evaluación del modelo:** [TBD]
+## 📌 Slides
+Las slides de este proyecto se pueden acceder en el siguiente ![enlace](https://www.canva.com/design/DAGhOyvtYYc/bwHgPxPu4kyQ58UTsgYpWA/edit?utm_content=DAGhOyvtYYc&utm_campaign=designshare&utm_medium=link2&utm_source=sharebutton)
 
-📊 **Visualización de resultados:**  [TBD]
+## 📊 Visualización de resultados: [TBD]
 Los resultados pueden visualizarse en mapas interactivos y gráficos comparativos.
 
 ## 🚀 Instalación y Uso
