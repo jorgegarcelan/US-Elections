@@ -6,6 +6,3 @@ imgs
 geo
 *.pkl
 *.keras
-old
-
-!us_elections_t3chfest.pdf
