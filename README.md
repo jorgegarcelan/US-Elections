@@ -5,7 +5,7 @@
 ## 📌 Descripción
 Este repositorio contiene un modelo de predicción electoral para las elecciones presidenciales de EE.UU. en 2024. Se utilizan datos electorales por condado de años anteriores, junto con características demográficas y socioeconómicas, para estimar el ganador en cada región y, finalmente, el presidente electo.
 
-## 📊 Datos Utilizados [TBD]
+## 📊 Datos Utilizados
 Los datos provienen de diversas fuentes, incluyendo:
 - 🗳️ **Resultados electorales por condado**
 - 📈 **Datos socioeconómicos y demográficos** (ingresos, educación, densidad poblacional, etc.)
@@ -16,23 +16,17 @@ Los datos provienen de diversas fuentes, incluyendo:
 📂 US-Elections-Prediction
  ├── 📄 README.md
  ├── 📄 .gitignore
- ├── 📄 .gitkeep
- ├── 📄 models.txt          # Registro de modelos probados
- ├── 📂 notebooks/          # Jupyter Notebooks con análisis exploratorio y modelado
- │   ├── census_api.ipynb   # Obtención de datos del censo
- │   ├── data_analysis.ipynb # Análisis exploratorio de datos
- │   ├── gwr.ipynb          # Regresión geográficamente ponderada
- │   ├── process_data.ipynb # Preprocesamiento de datos
- │   ├── regression.ipynb   # Modelos de regresión
- │   ├── simulation.ipynb   # Simulación de escenarios electorales
- │   ├── unsupervised.ipynb # Métodos no supervisados para análisis
+ ├── census_api.ipynb    # Obtención de datos del censo
+ ├── data_analysis.ipynb # Análisis exploratorio de datos
+ ├── process_data.ipynb  # Preprocesamiento de datos
+ ├── regression.ipynb    # Modelos de regresión
+ ├── simulation.ipynb    # Simulación de escenarios electorales
+ ├── data/               # Directorio con los datasets
 ```
 
 ## 📌 Slides
 Las slides de este proyecto se pueden acceder en el siguiente ![enlace](https://www.canva.com/design/DAGhOyvtYYc/bwHgPxPu4kyQ58UTsgYpWA/edit?utm_content=DAGhOyvtYYc&utm_campaign=designshare&utm_medium=link2&utm_source=sharebutton)
 
-## 📊 Visualización de resultados: [TBD]
-Los resultados pueden visualizarse en mapas interactivos y gráficos comparativos.
 
 ## 🚀 Instalación y Uso
 1. Clonar el repositorio:
