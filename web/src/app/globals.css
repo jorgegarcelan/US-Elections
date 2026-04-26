@@ -1,0 +1,58 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--font-space-grotesk), "DM Sans", system-ui, sans-serif;
+  --font-mono: var(--font-space-mono), "JetBrains Mono", monospace;
+  --font-display: var(--font-doto), "Space Mono", monospace;
+}
+
+:root {
+  /* Nothing Design System — Dark Mode */
+  --nd-black:          #000000;
+  --nd-surface:        #111111;
+  --nd-surface-raised: #1A1A1A;
+  --nd-border:         #222222;
+  --nd-border-visible: #333333;
+  --nd-text-disabled:  #666666;
+  --nd-text-secondary: #999999;
+  --nd-text-primary:   #E8E8E8;
+  --nd-text-display:   #FFFFFF;
+  --nd-accent:         #D71921;
+  --nd-accent-subtle:  rgba(215, 25, 33, 0.15);
+  --nd-success:        #4A9E5C;
+  --nd-warning:        #D4A843;
+  --nd-interactive:    #5B9BF6;
+
+  /* Election data colors (exempt from one-accent rule — encoding data) */
+  --gop:               #D71921;
+  --dem:               #5B9BF6;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--nd-black);
+  color: var(--nd-text-primary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Nothing dot-grid motif */
+.dot-grid-subtle {
+  background-image: radial-gradient(circle, var(--nd-border) 0.5px, transparent 0.5px);
+  background-size: 12px 12px;
+}
+
+/* Space Mono label utility */
+.nd-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--nd-text-secondary);
+}
