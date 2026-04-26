@@ -27,6 +27,7 @@ interface CountyData {
   pop_total: number;
   median_age: number;
   unemployment_rate: number;
+  isPrediction?: boolean;
 }
 
 interface SeatRow {
@@ -41,22 +42,62 @@ interface Tooltip {
   d: CountyData;
 }
 
-type Year = "2016" | "2020" | "2024";
-type MapMode = "winner" | "margin" | "shift";
+interface PredCounty {
+  fips: string;
+  county: string;
+  state: string;
+  per_dem: number;
+  per_gop: number;
+  winner: string;
+  delta_dem: number;
+  delta_gop: number;
+}
 
-const MATCHUP: Record<Year, string> = {
+interface PredState {
+  state: string;
+  state_code: string;
+  per_dem: number;
+  per_gop: number;
+  winner: string;
+  electoral_votes: number;
+  status: string;
+}
+
+interface PredResult {
+  counties: PredCounty[];
+  states: PredState[];
+  electoral: { dem: number; gop: number; winner: string };
+  simulation: {
+    n_sim: number;
+    model: string;
+    dem_win_prob: number;
+    gop_win_prob: number;
+    dem_ev_mean: number;
+    gop_ev_mean: number;
+    dem_ev_std: number;
+    gop_ev_std: number;
+  };
+}
+
+type Year = "2016" | "2020" | "2024" | "predict";
+type MapMode = "winner" | "margin" | "shift";
+type PredModel = "xgboost" | "random_forest" | "ridge";
+
+const MATCHUP: Record<string, string> = {
   "2016": "CLINTON VS. TRUMP",
   "2020": "BIDEN VS. TRUMP",
   "2024": "HARRIS VS. TRUMP",
+  "predict": "ML PREDICTION · 2024",
 };
 
-const PREV_YEAR: Record<Year, string> = {
+const PREV_YEAR: Record<string, string> = {
   "2016": "2012",
   "2020": "2016",
   "2024": "2020",
+  "predict": "2020",
 };
 
-// ── Nothing-adapted color helpers ─────────────────────────────────────────────
+// ── Color helpers ──────────────────────────────────────────────────────────────
 
 function winnerFill(winner: string) {
   return winner === "gop" ? "#D71921" : "#5B9BF6";
@@ -97,56 +138,29 @@ const fmt = (n: number) => Math.round(n).toLocaleString("en-US");
 const pct = (n: number, d = 1) => (n * 100).toFixed(d) + "%";
 const money = (n: number) => "$" + Math.round(n).toLocaleString("en-US");
 
-// ── Inline label component ─────────────────────────────────────────────────────
+// ── Inline components ──────────────────────────────────────────────────────────
 
 function Label({ children }: { children: React.ReactNode }) {
   return (
-    <span
-      style={{
-        fontFamily: "var(--font-mono)",
-        fontSize: 10,
-        letterSpacing: "0.08em",
-        textTransform: "uppercase" as const,
-        color: "var(--nd-text-secondary)",
-      }}
-    >
+    <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase" as const, color: "var(--nd-text-secondary)" }}>
       {children}
     </span>
   );
 }
 
 function Divider() {
-  return (
-    <div
-      style={{
-        height: 1,
-        backgroundColor: "var(--nd-border)",
-        margin: "0 16px",
-      }}
-    />
-  );
+  return <div style={{ height: 1, backgroundColor: "var(--nd-border)", margin: "0 16px" }} />;
 }
 
-// ── Segmented Control ──────────────────────────────────────────────────────────
-
 function SegmentedControl<T extends string>({
-  options,
-  value,
-  onChange,
+  options, value, onChange,
 }: {
   options: { value: T; label: string }[];
   value: T;
   onChange: (v: T) => void;
 }) {
   return (
-    <div
-      style={{
-        display: "flex",
-        border: "1px solid var(--nd-border-visible)",
-        borderRadius: 4,
-        overflow: "hidden",
-      }}
-    >
+    <div style={{ display: "flex", border: "1px solid var(--nd-border-visible)", borderRadius: 4, overflow: "hidden" }}>
       {options.map((opt, i) => (
         <button
           key={opt.value}
@@ -159,18 +173,9 @@ function SegmentedControl<T extends string>({
             textTransform: "uppercase",
             cursor: "pointer",
             border: "none",
-            borderRight:
-              i < options.length - 1
-                ? "1px solid var(--nd-border-visible)"
-                : "none",
-            backgroundColor:
-              value === opt.value
-                ? "var(--nd-text-display)"
-                : "transparent",
-            color:
-              value === opt.value
-                ? "var(--nd-black)"
-                : "var(--nd-text-secondary)",
+            borderRight: i < options.length - 1 ? "1px solid var(--nd-border-visible)" : "none",
+            backgroundColor: value === opt.value ? "var(--nd-text-display)" : "transparent",
+            color: value === opt.value ? "var(--nd-black)" : "var(--nd-text-secondary)",
             transition: "background-color 200ms ease-out, color 200ms ease-out",
           }}
         >
@@ -181,365 +186,150 @@ function SegmentedControl<T extends string>({
   );
 }
 
-// ── EC State Blocks Bar ────────────────────────────────────────────────────────
+// ── EC Bar ────────────────────────────────────────────────────────────────────
 
-interface StateBlock {
-  state: string;
-  state_code: string;
-  ev: number;
-  winner: "gop" | "dem" | "unknown";
-}
+interface StateBlock { state: string; state_code: string; ev: number; winner: "gop" | "dem" | "unknown" }
 
-function ECBar({ blocks }: { blocks: StateBlock[] }) {
-  const gopEV = blocks
-    .filter((b) => b.winner === "gop")
-    .reduce((s, b) => s + b.ev, 0);
-  const demEV = blocks
-    .filter((b) => b.winner === "dem")
-    .reduce((s, b) => s + b.ev, 0);
+function ECBar({
+  blocks, predResult,
+}: {
+  blocks: StateBlock[];
+  predResult: PredResult | null;
+}) {
+  const gopEV = blocks.filter((b) => b.winner === "gop").reduce((s, b) => s + b.ev, 0);
+  const demEV = blocks.filter((b) => b.winner === "dem").reduce((s, b) => s + b.ev, 0);
   const total = blocks.reduce((s, b) => s + b.ev, 0) || 538;
 
-  // Sort: GOP states first (largest to smallest), then DEM states (smallest to largest)
   const sorted = [
-    ...blocks
-      .filter((b) => b.winner === "gop")
-      .sort((a, b) => b.ev - a.ev),
-    ...blocks
-      .filter((b) => b.winner !== "gop")
-      .sort((a, b) => a.ev - b.ev),
+    ...blocks.filter((b) => b.winner === "gop").sort((a, b) => b.ev - a.ev),
+    ...blocks.filter((b) => b.winner !== "gop").sort((a, b) => a.ev - b.ev),
   ];
 
   return (
-    <div
-      style={{
-        backgroundColor: "var(--nd-surface)",
-        borderBottom: "1px solid var(--nd-border)",
-        padding: "20px 24px 16px",
-      }}
-    >
-      {/* Numbers row */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "flex-end",
-          marginBottom: 10,
-        }}
-      >
+    <div style={{ backgroundColor: "var(--nd-surface)", borderBottom: "1px solid var(--nd-border)", padding: "20px 24px 16px", flexShrink: 0 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 10 }}>
+        {/* GOP */}
         <div>
-          <div
-            style={{
-              fontFamily: "var(--font-display)",
-              fontSize: 64,
-              lineHeight: 1,
-              color: "#D71921",
-              letterSpacing: "-0.02em",
-            }}
-          >
+          <div style={{ fontFamily: "var(--font-display)", fontSize: 64, lineHeight: 1, color: "#D71921", letterSpacing: "-0.02em" }}>
             {gopEV}
           </div>
           <Label>Republican</Label>
         </div>
 
+        {/* Centre */}
         <div style={{ textAlign: "center" }}>
-          <div
-            style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: 11,
-              letterSpacing: "0.1em",
-              color: "var(--nd-text-disabled)",
-              textTransform: "uppercase",
-            }}
-          >
+          <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, letterSpacing: "0.1em", color: "var(--nd-text-disabled)", textTransform: "uppercase" }}>
             270 to win
           </div>
-          {gopEV >= 270 && (
-            <div
-              style={{
-                fontFamily: "var(--font-mono)",
-                fontSize: 10,
-                letterSpacing: "0.08em",
-                color: "#D71921",
-                textTransform: "uppercase",
-                marginTop: 2,
-              }}
-            >
-              [ R WINS ]
-            </div>
-          )}
-          {demEV >= 270 && (
-            <div
-              style={{
-                fontFamily: "var(--font-mono)",
-                fontSize: 10,
-                letterSpacing: "0.08em",
-                color: "#5B9BF6",
-                textTransform: "uppercase",
-                marginTop: 2,
-              }}
-            >
-              [ D WINS ]
+          {gopEV >= 270 && <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, letterSpacing: "0.08em", color: "#D71921", textTransform: "uppercase", marginTop: 2 }}>[ R WINS ]</div>}
+          {demEV >= 270 && <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, letterSpacing: "0.08em", color: "#5B9BF6", textTransform: "uppercase", marginTop: 2 }}>[ D WINS ]</div>}
+          {/* Win probability when in predict mode */}
+          {predResult && (
+            <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 2 }}>
+              <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "#D71921", letterSpacing: "0.06em" }}>
+                R {(predResult.simulation.gop_win_prob * 100).toFixed(0)}%
+              </div>
+              <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "#5B9BF6", letterSpacing: "0.06em" }}>
+                D {(predResult.simulation.dem_win_prob * 100).toFixed(0)}%
+              </div>
+              <div style={{ fontFamily: "var(--font-mono)", fontSize: 9, color: "var(--nd-text-disabled)", letterSpacing: "0.06em", marginTop: 2 }}>
+                WIN PROB · {predResult.simulation.n_sim} SIMS
+              </div>
             </div>
           )}
         </div>
 
+        {/* DEM */}
         <div style={{ textAlign: "right" }}>
-          <div
-            style={{
-              fontFamily: "var(--font-display)",
-              fontSize: 64,
-              lineHeight: 1,
-              color: "#5B9BF6",
-              letterSpacing: "-0.02em",
-            }}
-          >
+          <div style={{ fontFamily: "var(--font-display)", fontSize: 64, lineHeight: 1, color: "#5B9BF6", letterSpacing: "-0.02em" }}>
             {demEV}
           </div>
           <Label>Democrat</Label>
         </div>
       </div>
 
-      {/* State block segments — the Nothing segmented bar */}
-      <div
-        style={{
-          display: "flex",
-          height: 20,
-          gap: 2,
-          position: "relative",
-        }}
-      >
+      {/* State blocks */}
+      <div style={{ display: "flex", height: 20, gap: 2, position: "relative" }}>
         {sorted.map((b) => (
           <div
             key={b.state_code}
             title={`${b.state} · ${b.ev} EV`}
             style={{
               flex: b.ev,
-              backgroundColor:
-                b.winner === "gop"
-                  ? "#D71921"
-                  : b.winner === "dem"
-                  ? "#5B9BF6"
-                  : "var(--nd-border-visible)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              overflow: "hidden",
-              cursor: "default",
+              backgroundColor: b.winner === "gop" ? "#D71921" : b.winner === "dem" ? "#5B9BF6" : "var(--nd-border-visible)",
+              display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", cursor: "default",
             }}
           >
             {b.ev >= 10 && (
-              <span
-                style={{
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 8,
-                  letterSpacing: "0.04em",
-                  color:
-                    b.winner === "gop"
-                      ? "rgba(255,255,255,0.7)"
-                      : "rgba(0,0,0,0.6)",
-                  userSelect: "none",
-                  textTransform: "uppercase",
-                }}
-              >
+              <span style={{ fontFamily: "var(--font-mono)", fontSize: 8, letterSpacing: "0.04em", color: b.winner === "gop" ? "rgba(255,255,255,0.7)" : "rgba(0,0,0,0.6)", userSelect: "none", textTransform: "uppercase" }}>
                 {b.state_code}
               </span>
             )}
           </div>
         ))}
-        {/* 270 marker */}
-        <div
-          style={{
-            position: "absolute",
-            left: `${(270 / total) * 100}%`,
-            top: -4,
-            bottom: -4,
-            width: 1,
-            backgroundColor: "var(--nd-text-disabled)",
-            pointerEvents: "none",
-          }}
-        />
+        <div style={{ position: "absolute", left: `${(270 / total) * 100}%`, top: -4, bottom: -4, width: 1, backgroundColor: "var(--nd-text-disabled)", pointerEvents: "none" }} />
       </div>
     </div>
   );
 }
 
-// ── Sidebar stat row ────────────────────────────────────────────────────────────
+// ── Sidebar components ─────────────────────────────────────────────────────────
 
-function StatRow({
-  label,
-  value,
-  color,
-}: {
-  label: string;
-  value: string;
-  color?: string;
-}) {
+function StatRow({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
-    <div
-      style={{
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "baseline",
-        padding: "8px 0",
-      }}
-    >
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "8px 0" }}>
       <Label>{label}</Label>
-      <span
-        style={{
-          fontFamily: "var(--font-mono)",
-          fontSize: 14,
-          fontWeight: 700,
-          color: color ?? "var(--nd-text-primary)",
-          letterSpacing: "0.02em",
-        }}
-      >
-        {value}
-      </span>
+      <span style={{ fontFamily: "var(--font-mono)", fontSize: 14, fontWeight: 700, color: color ?? "var(--nd-text-primary)", letterSpacing: "0.02em" }}>{value}</span>
     </div>
   );
 }
 
-// ── Inline vote bar ─────────────────────────────────────────────────────────────
-
-function VoteBar({
-  gopPct,
-  demPct,
-}: {
-  gopPct: number;
-  demPct: number;
-}) {
+function VoteBar({ gopPct, demPct }: { gopPct: number; demPct: number }) {
   return (
     <div>
-      <div
-        style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}
-      >
-        <Label>Popular vote</Label>
-      </div>
-
-      {/* GOP bar */}
-      <div style={{ marginBottom: 6 }}>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            marginBottom: 3,
-          }}
-        >
-          <Label>R</Label>
-          <span
-            style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: 12,
-              color: "#D71921",
-              fontWeight: 700,
-            }}
-          >
-            {(gopPct * 100).toFixed(1)}%
-          </span>
+      <div style={{ marginBottom: 6 }}><Label>Popular vote</Label></div>
+      {[{ label: "R", p: gopPct, color: "#D71921" }, { label: "D", p: demPct, color: "#5B9BF6" }].map(({ label, p, color }) => (
+        <div key={label} style={{ marginBottom: 6 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+            <Label>{label}</Label>
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color, fontWeight: 700 }}>{(p * 100).toFixed(1)}%</span>
+          </div>
+          <div style={{ height: 4, backgroundColor: "var(--nd-border-visible)", position: "relative" }}>
+            <div style={{ position: "absolute", left: 0, top: 0, height: "100%", width: `${p * 100}%`, backgroundColor: color, transition: "width 400ms cubic-bezier(0.25,0.1,0.25,1)" }} />
+          </div>
         </div>
-        <div
-          style={{
-            height: 4,
-            backgroundColor: "var(--nd-border-visible)",
-            position: "relative",
-          }}
-        >
-          <div
-            style={{
-              position: "absolute",
-              left: 0,
-              top: 0,
-              height: "100%",
-              width: `${gopPct * 100}%`,
-              backgroundColor: "#D71921",
-              transition: "width 400ms cubic-bezier(0.25,0.1,0.25,1)",
-            }}
-          />
-        </div>
-      </div>
-
-      {/* DEM bar */}
-      <div>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            marginBottom: 3,
-          }}
-        >
-          <Label>D</Label>
-          <span
-            style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: 12,
-              color: "#5B9BF6",
-              fontWeight: 700,
-            }}
-          >
-            {(demPct * 100).toFixed(1)}%
-          </span>
-        </div>
-        <div
-          style={{
-            height: 4,
-            backgroundColor: "var(--nd-border-visible)",
-            position: "relative",
-          }}
-        >
-          <div
-            style={{
-              position: "absolute",
-              left: 0,
-              top: 0,
-              height: "100%",
-              width: `${demPct * 100}%`,
-              backgroundColor: "#5B9BF6",
-              transition: "width 400ms cubic-bezier(0.25,0.1,0.25,1)",
-            }}
-          />
-        </div>
-      </div>
+      ))}
     </div>
   );
 }
 
-// ── Legend ─────────────────────────────────────────────────────────────────────
+// ── Legends ────────────────────────────────────────────────────────────────────
 
 const LEGENDS: Record<MapMode, { color: string; label: string }[]> = {
-  winner: [
-    { color: "#D71921", label: "Republican" },
-    { color: "#5B9BF6", label: "Democrat" },
-  ],
-  margin: [
-    { color: "#D71921", label: "R +40%" },
-    { color: "rgba(215,25,33,0.40)", label: "R +10%" },
-    { color: "rgba(215,25,33,0.20)", label: "R +1%" },
-    { color: "#2A2A2A", label: "Toss-up" },
-    { color: "rgba(91,155,246,0.20)", label: "D +1%" },
-    { color: "rgba(91,155,246,0.40)", label: "D +10%" },
-    { color: "#5B9BF6", label: "D +40%" },
-  ],
-  shift: [
-    { color: "#D71921", label: "R swing +12%" },
-    { color: "rgba(215,25,33,0.40)", label: "R swing +3%" },
-    { color: "#2A2A2A", label: "No shift" },
-    { color: "rgba(91,155,246,0.40)", label: "D swing +3%" },
-    { color: "#5B9BF6", label: "D swing +12%" },
-  ],
+  winner:  [{ color: "#D71921", label: "Republican" }, { color: "#5B9BF6", label: "Democrat" }],
+  margin:  [{ color: "#D71921", label: "R +40%" }, { color: "rgba(215,25,33,0.40)", label: "R +10%" }, { color: "rgba(215,25,33,0.20)", label: "R +1%" }, { color: "#2A2A2A", label: "Toss-up" }, { color: "rgba(91,155,246,0.20)", label: "D +1%" }, { color: "rgba(91,155,246,0.40)", label: "D +10%" }, { color: "#5B9BF6", label: "D +40%" }],
+  shift:   [{ color: "#D71921", label: "R swing +12%" }, { color: "rgba(215,25,33,0.40)", label: "R swing +3%" }, { color: "#2A2A2A", label: "No shift" }, { color: "rgba(91,155,246,0.40)", label: "D swing +3%" }, { color: "#5B9BF6", label: "D swing +12%" }],
 };
 
 // ── Main ───────────────────────────────────────────────────────────────────────
 
 export default function ElectionDashboard() {
-  const [year, setYear] = useState<Year>("2024");
-  const [mode, setMode] = useState<MapMode>("winner");
+  const [year, setYear]           = useState<Year>("2024");
+  const [mode, setMode]           = useState<MapMode>("winner");
   const [countyMap, setCountyMap] = useState<Record<string, CountyData>>({});
-  const [geoData, setGeoData] = useState<object | null>(null);
-  const [seats, setSeats] = useState<SeatRow[]>([]);
-  const [tooltip, setTooltip] = useState<Tooltip | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
+  const [geoData, setGeoData]     = useState<object | null>(null);
+  const [seats, setSeats]         = useState<SeatRow[]>([]);
+  const [tooltip, setTooltip]     = useState<Tooltip | null>(null);
+  const [loading, setLoading]     = useState(true);
+  const [search, setSearch]       = useState("");
   const [hoveredState, setHoveredState] = useState<string | null>(null);
+
+  // Prediction state
+  const [predModel, setPredModel]     = useState<PredModel>("xgboost");
+  const [nSim, setNSim]               = useState(200);
+  const [predLoading, setPredLoading] = useState(false);
+  const [predResult, setPredResult]   = useState<PredResult | null>(null);
+  const [predError, setPredError]     = useState<string | null>(null);
 
   // Load GeoJSON once
   useEffect(() => {
@@ -548,115 +338,122 @@ export default function ElectionDashboard() {
 
   // Load seats once
   useEffect(() => {
-    fetch("/data/seats.csv")
-      .then((r) => r.text())
-      .then((t) => {
-        const res = Papa.parse<SeatRow>(t, {
-          header: true,
-          skipEmptyLines: true,
-          dynamicTyping: true,
-        });
-        setSeats(res.data);
-      });
+    fetch("/data/seats.csv").then((r) => r.text()).then((t) => {
+      const res = Papa.parse<SeatRow>(t, { header: true, skipEmptyLines: true, dynamicTyping: true });
+      setSeats(res.data);
+    });
   }, []);
 
-  // Load CSV per year
+  // Load CSV when year changes (historical only)
   useEffect(() => {
+    if (year === "predict") return;
     setLoading(true);
-    fetch(`/data/final_data_${year}.csv`)
-      .then((r) => r.text())
-      .then((t) => {
-        const res = Papa.parse<Record<string, string>>(t, {
-          header: true,
-          skipEmptyLines: true,
-        });
-        const map: Record<string, CountyData> = {};
-        for (const row of res.data) {
-          const fips = row.county_fips?.padStart(5, "0");
-          if (!fips) continue;
-          map[fips] = {
-            county_fips: fips,
-            county: row.county,
-            state: row.state,
-            votes_gop: parseFloat(row.votes_gop) || 0,
-            votes_dem: parseFloat(row.votes_dem) || 0,
-            total_votes: parseFloat(row.total_votes) || 0,
-            per_gop: parseFloat(row.per_gop) || 0,
-            per_dem: parseFloat(row.per_dem) || 0,
-            winner: row.winner,
-            delta_per_gop: parseFloat(row.delta_per_gop) || 0,
-            median_income: parseFloat(row.median_income) || 0,
-            bachelors_rate: parseFloat(row.bachelors_rate) || 0,
-            pop_total: parseFloat(row.pop_total) || 0,
-            median_age: parseFloat(row.median_age) || 0,
-            unemployment_rate: parseFloat(row.unemployment_rate) || 0,
-          };
-        }
-        setCountyMap(map);
-        setLoading(false);
-      });
+    fetch(`/data/final_data_${year}.csv`).then((r) => r.text()).then((t) => {
+      const res = Papa.parse<Record<string, string>>(t, { header: true, skipEmptyLines: true });
+      const map: Record<string, CountyData> = {};
+      for (const row of res.data) {
+        const fips = row.county_fips?.padStart(5, "0");
+        if (!fips) continue;
+        map[fips] = {
+          county_fips: fips, county: row.county, state: row.state,
+          votes_gop: parseFloat(row.votes_gop) || 0, votes_dem: parseFloat(row.votes_dem) || 0,
+          total_votes: parseFloat(row.total_votes) || 0,
+          per_gop: parseFloat(row.per_gop) || 0, per_dem: parseFloat(row.per_dem) || 0,
+          winner: row.winner, delta_per_gop: parseFloat(row.delta_per_gop) || 0,
+          median_income: parseFloat(row.median_income) || 0, bachelors_rate: parseFloat(row.bachelors_rate) || 0,
+          pop_total: parseFloat(row.pop_total) || 0, median_age: parseFloat(row.median_age) || 0,
+          unemployment_rate: parseFloat(row.unemployment_rate) || 0,
+        };
+      }
+      setCountyMap(map);
+      setLoading(false);
+    });
   }, [year]);
 
-  // ── Derived ──────────────────────────────────────────────────────────────────
+  // When switching to predict and result exists, populate countyMap from prediction
+  useEffect(() => {
+    if (year !== "predict" || !predResult) {
+      if (year === "predict") setLoading(false);
+      return;
+    }
+    const map: Record<string, CountyData> = {};
+    for (const c of predResult.counties) {
+      map[c.fips] = {
+        county_fips: c.fips, county: c.county, state: c.state,
+        votes_gop: 0, votes_dem: 0, total_votes: 0,
+        per_gop: c.per_gop, per_dem: c.per_dem, winner: c.winner,
+        delta_per_gop: c.delta_gop,
+        median_income: 0, bachelors_rate: 0, pop_total: 0, median_age: 0, unemployment_rate: 0,
+        isPrediction: true,
+      };
+    }
+    setCountyMap(map);
+    setLoading(false);
+  }, [year, predResult]);
+
+  // Run prediction
+  const runPrediction = useCallback(async () => {
+    setPredLoading(true);
+    setPredError(null);
+    try {
+      const res = await fetch(`http://127.0.0.1:8000/predict?n_sim=${nSim}&model=${predModel}`);
+      if (!res.ok) throw new Error(`API error ${res.status}`);
+      const data: PredResult = await res.json();
+      setPredResult(data);
+    } catch (e) {
+      setPredError(e instanceof Error ? e.message : "Unknown error");
+    } finally {
+      setPredLoading(false);
+    }
+  }, [predModel, nSim]);
+
+  // ── Derived ───────────────────────────────────────────────────────────────────
 
   const counties = useMemo(() => Object.values(countyMap), [countyMap]);
 
   const stats = useMemo(() => {
     let gopC = 0, demC = 0, gopV = 0, demV = 0;
     for (const c of counties) {
-      if (c.winner === "gop") gopC++;
-      else demC++;
-      gopV += c.votes_gop;
-      demV += c.votes_dem;
+      if (c.winner === "gop") gopC++; else demC++;
+      gopV += c.votes_gop; demV += c.votes_dem;
     }
     return { gopC, demC, gopV, demV };
   }, [counties]);
 
-  // Per-state votes
   const stateVotes = useMemo(() => {
     const sv: Record<string, { gop: number; dem: number }> = {};
     for (const c of counties) {
       if (!sv[c.state]) sv[c.state] = { gop: 0, dem: 0 };
-      sv[c.state].gop += c.votes_gop;
-      sv[c.state].dem += c.votes_dem;
+      sv[c.state].gop += c.votes_gop; sv[c.state].dem += c.votes_dem;
     }
     return sv;
   }, [counties]);
 
-  // State blocks for EC bar
   const stateBlocks = useMemo((): StateBlock[] => {
+    if (year === "predict" && predResult) {
+      return predResult.states.map((s) => ({
+        state: s.state, state_code: s.state_code, ev: s.electoral_votes,
+        winner: s.winner as "gop" | "dem",
+      }));
+    }
     return seats.map((s) => {
       const sv = stateVotes[s.state];
-      const winner: "gop" | "dem" | "unknown" = sv
-        ? sv.gop > sv.dem
-          ? "gop"
-          : "dem"
-        : "unknown";
-      return {
-        state: s.state,
-        state_code: s.state_code,
-        ev: s.ElectoralVotes2024,
-        winner,
-      };
+      const winner: "gop" | "dem" | "unknown" = sv ? (sv.gop > sv.dem ? "gop" : "dem") : "unknown";
+      return { state: s.state, state_code: s.state_code, ev: s.ElectoralVotes2024, winner };
     });
-  }, [seats, stateVotes]);
+  }, [seats, stateVotes, year, predResult]);
 
-  // Biggest swings
   const swings = useMemo(() => {
-    return [...counties]
-      .filter((c) => Math.abs(c.delta_per_gop) > 0.005)
-      .sort((a, b) => Math.abs(b.delta_per_gop) - Math.abs(a.delta_per_gop))
-      .slice(0, 7);
+    return [...counties].filter((c) => Math.abs(c.delta_per_gop) > 0.005)
+      .sort((a, b) => Math.abs(b.delta_per_gop) - Math.abs(a.delta_per_gop)).slice(0, 7);
   }, [counties]);
 
-  // Search highlight
   const searchFips = useMemo(() => {
     if (!search.trim()) return null;
     const q = search.toLowerCase();
     const s = new Set<string>();
     for (const c of counties) {
-      if (c.county.toLowerCase().includes(q) || c.state.toLowerCase().includes(q))
-        s.add(c.county_fips);
+      if (c.county.toLowerCase().includes(q) || c.state.toLowerCase().includes(q)) s.add(c.county_fips);
     }
     return s;
   }, [search, counties]);
@@ -664,131 +461,146 @@ export default function ElectionDashboard() {
   const searchResults = useMemo(() => {
     if (!search.trim()) return [];
     const q = search.toLowerCase();
-    return counties
-      .filter((c) => c.county.toLowerCase().includes(q) || c.state.toLowerCase().includes(q))
-      .slice(0, 5);
+    return counties.filter((c) => c.county.toLowerCase().includes(q) || c.state.toLowerCase().includes(q)).slice(0, 5);
   }, [search, counties]);
 
-  // Hovered state stats
   const stateDetail = useMemo(() => {
     if (!hoveredState) return null;
+    if (year === "predict" && predResult) {
+      const s = predResult.states.find((st) => st.state === hoveredState);
+      if (!s) return null;
+      const stateCts = counties.filter((c) => c.state === hoveredState);
+      return {
+        name: hoveredState, gopPct: s.per_gop, demPct: s.per_dem,
+        gopCts: stateCts.filter((c) => c.winner === "gop").length,
+        demCts: stateCts.filter((c) => c.winner === "dem").length,
+        winner: s.winner, status: s.status,
+      };
+    }
     const sv = stateVotes[hoveredState];
     if (!sv) return null;
     const total = sv.gop + sv.dem;
     const stateCts = counties.filter((c) => c.state === hoveredState);
     return {
-      name: hoveredState,
-      gopPct: sv.gop / total,
-      demPct: sv.dem / total,
+      name: hoveredState, gopPct: sv.gop / total, demPct: sv.dem / total,
       gopCts: stateCts.filter((c) => c.winner === "gop").length,
       demCts: stateCts.filter((c) => c.winner === "dem").length,
-      winner: sv.gop > sv.dem ? "gop" : "dem",
+      winner: sv.gop > sv.dem ? "gop" : "dem", status: undefined,
     };
-  }, [hoveredState, stateVotes, counties]);
+  }, [hoveredState, stateVotes, counties, year, predResult]);
 
-  // ── Handlers ─────────────────────────────────────────────────────────────────
+  // ── Handlers ──────────────────────────────────────────────────────────────────
 
   const handleEnter = useCallback(
     (geo: { properties: { STATE: string; COUNTY: string } }, evt: React.MouseEvent) => {
       const fips = geo.properties.STATE + geo.properties.COUNTY;
       const d = countyMap[fips];
-      if (d) {
-        setTooltip({ x: evt.clientX, y: evt.clientY, d });
-        setHoveredState(d.state);
-      }
+      if (d) { setTooltip({ x: evt.clientX, y: evt.clientY, d }); setHoveredState(d.state); }
     },
     [countyMap]
   );
-
-  const handleMove = useCallback((evt: React.MouseEvent) => {
-    setTooltip((p) => p && { ...p, x: evt.clientX, y: evt.clientY });
-  }, []);
-
-  const handleLeave = useCallback(() => {
-    setTooltip(null);
-    setHoveredState(null);
-  }, []);
-
-  // ── Render ───────────────────────────────────────────────────────────────────
+  const handleMove  = useCallback((evt: React.MouseEvent) => { setTooltip((p) => p && { ...p, x: evt.clientX, y: evt.clientY }); }, []);
+  const handleLeave = useCallback(() => { setTooltip(null); setHoveredState(null); }, []);
 
   const totalVotes = stats.gopV + stats.demV;
 
+  // ── Render ────────────────────────────────────────────────────────────────────
+
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100vh",
-        overflow: "hidden",
-        backgroundColor: "var(--nd-black)",
-        fontFamily: "var(--font-sans)",
-      }}
-    >
+    <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden", backgroundColor: "var(--nd-black)", fontFamily: "var(--font-sans)" }}>
+
       {/* ── Header ── */}
-      <header
-        style={{
-          backgroundColor: "var(--nd-surface)",
-          borderBottom: "1px solid var(--nd-border)",
-          padding: "14px 24px",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          flexShrink: 0,
-        }}
-      >
+      <header style={{ backgroundColor: "var(--nd-surface)", borderBottom: "1px solid var(--nd-border)", padding: "14px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          {/* Nothing-style signal dot */}
-          <div
-            style={{
-              width: 8,
-              height: 8,
-              borderRadius: "50%",
-              backgroundColor: "var(--nd-accent)",
-              flexShrink: 0,
-            }}
-          />
+          <div style={{ width: 8, height: 8, borderRadius: "50%", backgroundColor: "var(--nd-accent)", flexShrink: 0 }} />
           <div>
-            <div
-              style={{
-                fontFamily: "var(--font-sans)",
-                fontWeight: 700,
-                fontSize: 16,
-                color: "var(--nd-text-display)",
-                letterSpacing: "-0.01em",
-              }}
-            >
+            <div style={{ fontFamily: "var(--font-sans)", fontWeight: 700, fontSize: 16, color: "var(--nd-text-display)", letterSpacing: "-0.01em" }}>
               U.S. Presidential Elections
             </div>
-            <div
-              style={{
-                fontFamily: "var(--font-mono)",
-                fontSize: 10,
-                letterSpacing: "0.08em",
-                textTransform: "uppercase",
-                color: "var(--nd-text-disabled)",
-                marginTop: 2,
-              }}
-            >
+            <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--nd-text-disabled)", marginTop: 2 }}>
               {MATCHUP[year]} · County Level
             </div>
           </div>
         </div>
 
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          {/* Predict controls */}
+          {year === "predict" && (
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              {/* Model selector */}
+              <SegmentedControl<PredModel>
+                options={[
+                  { value: "xgboost",       label: "XGBoost" },
+                  { value: "random_forest", label: "RF" },
+                  { value: "ridge",         label: "Ridge" },
+                ]}
+                value={predModel}
+                onChange={setPredModel}
+              />
+              {/* N simulations */}
+              <select
+                value={nSim}
+                onChange={(e) => setNSim(Number(e.target.value))}
+                style={{
+                  backgroundColor: "transparent",
+                  border: "1px solid var(--nd-border-visible)",
+                  borderRadius: 4,
+                  color: "var(--nd-text-secondary)",
+                  fontFamily: "var(--font-mono)",
+                  fontSize: 11,
+                  letterSpacing: "0.06em",
+                  padding: "6px 10px",
+                  cursor: "pointer",
+                  textTransform: "uppercase",
+                }}
+              >
+                {[50, 100, 200, 500, 1000].map((n) => (
+                  <option key={n} value={n} style={{ backgroundColor: "var(--nd-surface)" }}>
+                    {n} SIMS
+                  </option>
+                ))}
+              </select>
+              {/* Run button */}
+              <button
+                onClick={runPrediction}
+                disabled={predLoading}
+                style={{
+                  padding: "6px 18px",
+                  fontFamily: "var(--font-mono)",
+                  fontSize: 11,
+                  letterSpacing: "0.06em",
+                  textTransform: "uppercase",
+                  cursor: predLoading ? "default" : "pointer",
+                  border: "none",
+                  borderRadius: 4,
+                  backgroundColor: predLoading ? "var(--nd-border-visible)" : "var(--nd-accent)",
+                  color: predLoading ? "var(--nd-text-disabled)" : "#FFFFFF",
+                  transition: "background-color 200ms ease-out",
+                }}
+              >
+                {predLoading ? "[ Running... ]" : "[ Run ]"}
+              </button>
+            </div>
+          )}
+
+          {/* Year selector */}
           <SegmentedControl<Year>
             options={[
-              { value: "2016", label: "2016" },
-              { value: "2020", label: "2020" },
-              { value: "2024", label: "2024" },
+              { value: "2016",    label: "2016" },
+              { value: "2020",    label: "2020" },
+              { value: "2024",    label: "2024" },
+              { value: "predict", label: "Predict" },
             ]}
             value={year}
             onChange={setYear}
           />
+
+          {/* Map mode */}
           <SegmentedControl<MapMode>
             options={[
               { value: "winner", label: "Winner" },
               { value: "margin", label: "Margin" },
-              { value: "shift", label: "Shift" },
+              { value: "shift",  label: "Shift"  },
             ]}
             value={mode}
             onChange={setMode}
@@ -796,43 +608,36 @@ export default function ElectionDashboard() {
         </div>
       </header>
 
-      {/* ── Electoral College ── */}
-      <ECBar blocks={stateBlocks} />
+      {/* ── EC Bar ── */}
+      <ECBar blocks={stateBlocks} predResult={year === "predict" ? predResult : null} />
 
       {/* ── Body ── */}
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
 
         {/* Map */}
         <div
-          style={{
-            flex: 1,
-            position: "relative",
-            backgroundColor: "var(--nd-black)",
-          }}
+          style={{ flex: 1, position: "relative", backgroundColor: "var(--nd-black)" }}
           onMouseMove={handleMove}
         >
-          {loading && (
-            <div
-              style={{
-                position: "absolute",
-                inset: 0,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                zIndex: 10,
-              }}
-            >
-              <span
-                style={{
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 11,
-                  letterSpacing: "0.1em",
-                  textTransform: "uppercase",
-                  color: "var(--nd-text-secondary)",
-                }}
-              >
-                [ LOADING... ]
+          {/* Loading / empty states */}
+          {(loading || predLoading) && (
+            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10 }}>
+              <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--nd-text-secondary)" }}>
+                {predLoading ? "[ Simulating... ]" : "[ Loading... ]"}
               </span>
+            </div>
+          )}
+
+          {year === "predict" && !predResult && !predLoading && (
+            <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, zIndex: 5 }}>
+              <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--nd-text-disabled)" }}>
+                Select model and run simulation
+              </div>
+              {predError && (
+                <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--nd-accent)", letterSpacing: "0.06em" }}>
+                  [ ERROR: {predError} ] — Is the API running on port 8000?
+                </div>
+              )}
             </div>
           )}
 
@@ -844,26 +649,12 @@ export default function ElectionDashboard() {
             >
               <ZoomableGroup zoom={1}>
                 <Geographies geography={geoData}>
-                  {({
-                    geographies,
-                  }: {
-                    geographies: Array<{
-                      rsmKey: string;
-                      properties: { STATE: string; COUNTY: string };
-                    }>;
-                  }) =>
+                  {({ geographies }: { geographies: Array<{ rsmKey: string; properties: { STATE: string; COUNTY: string } }> }) =>
                     geographies.map((geo) => {
                       const fips = geo.properties.STATE + geo.properties.COUNTY;
                       const d = countyMap[fips];
-
-                      const dimmed =
-                        searchFips !== null && !searchFips.has(fips);
-
-                      const fill = d
-                        ? countyFill(d, mode)
-                        : "var(--nd-border-visible)";
-
-                      const isHoveredState = d?.state === hoveredState;
+                      const dimmed = searchFips !== null && !searchFips.has(fips);
+                      const fill = d ? countyFill(d, mode) : "var(--nd-border-visible)";
 
                       return (
                         <Geography
@@ -873,22 +664,8 @@ export default function ElectionDashboard() {
                           stroke="#000000"
                           strokeWidth={0.5}
                           opacity={dimmed ? 0.15 : 1}
-                          style={{
-                            default: { outline: "none" },
-                            hover: {
-                              outline: isHoveredState
-                                ? "none"
-                                : "1px solid rgba(255,255,255,0.4)",
-                              opacity: 0.85,
-                            },
-                            pressed: { outline: "none" },
-                          }}
-                          onMouseEnter={(evt) =>
-                            handleEnter(
-                              geo,
-                              evt as unknown as React.MouseEvent
-                            )
-                          }
+                          style={{ default: { outline: "none" }, hover: { outline: "none", opacity: 0.85 }, pressed: { outline: "none" } }}
+                          onMouseEnter={(evt) => handleEnter(geo, evt as unknown as React.MouseEvent)}
                           onMouseLeave={handleLeave}
                         />
                       );
@@ -900,86 +677,68 @@ export default function ElectionDashboard() {
           )}
 
           {/* Legend */}
-          <div
-            style={{
-              position: "absolute",
-              bottom: 16,
-              left: 16,
-              backgroundColor: "var(--nd-surface)",
-              border: "1px solid var(--nd-border-visible)",
-              borderRadius: 4,
-              padding: "10px 14px",
-            }}
-          >
-            <div style={{ marginBottom: 8 }}>
-              <Label>
-                {mode === "winner"
-                  ? "Winner"
-                  : mode === "margin"
-                  ? "Vote margin"
-                  : `Shift vs. ${PREV_YEAR[year]}`}
-              </Label>
-            </div>
+          <div style={{ position: "absolute", bottom: 16, left: 16, backgroundColor: "var(--nd-surface)", border: "1px solid var(--nd-border-visible)", borderRadius: 4, padding: "10px 14px" }}>
+            <div style={{ marginBottom: 8 }}><Label>{mode === "winner" ? "Winner" : mode === "margin" ? "Vote margin" : `Shift vs. ${PREV_YEAR[year]}`}</Label></div>
             <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
               {LEGENDS[mode].map(({ color, label }) => (
-                <div
-                  key={label}
-                  style={{ display: "flex", alignItems: "center", gap: 8 }}
-                >
-                  <div
-                    style={{
-                      width: 14,
-                      height: 10,
-                      backgroundColor: color,
-                      flexShrink: 0,
-                      border: color === "#2A2A2A" ? "1px solid #444" : "none",
-                    }}
-                  />
-                  <span
-                    style={{
-                      fontFamily: "var(--font-mono)",
-                      fontSize: 10,
-                      color: "var(--nd-text-secondary)",
-                      letterSpacing: "0.04em",
-                    }}
-                  >
-                    {label}
-                  </span>
+                <div key={label} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <div style={{ width: 14, height: 10, backgroundColor: color, flexShrink: 0, border: color === "#2A2A2A" ? "1px solid #444" : "none" }} />
+                  <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--nd-text-secondary)", letterSpacing: "0.04em" }}>{label}</span>
                 </div>
               ))}
             </div>
           </div>
+
+          {/* Predict badge */}
+          {year === "predict" && predResult && (
+            <div style={{ position: "absolute", bottom: 16, right: 16, backgroundColor: "var(--nd-surface)", border: "1px solid var(--nd-border-visible)", borderRadius: 4, padding: "10px 14px" }}>
+              <div style={{ marginBottom: 4 }}><Label>{predResult.simulation.model} · {predResult.simulation.n_sim} sims</Label></div>
+              <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "#D71921", letterSpacing: "0.04em" }}>
+                R win prob: {(predResult.simulation.gop_win_prob * 100).toFixed(0)}%
+              </div>
+              <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "#5B9BF6", letterSpacing: "0.04em" }}>
+                D win prob: {(predResult.simulation.dem_win_prob * 100).toFixed(0)}%
+              </div>
+              <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--nd-text-disabled)", letterSpacing: "0.04em", marginTop: 4 }}>
+                D EV: {predResult.simulation.dem_ev_mean} ± {predResult.simulation.dem_ev_std}
+              </div>
+              <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--nd-text-disabled)", letterSpacing: "0.04em" }}>
+                R EV: {predResult.simulation.gop_ev_mean} ± {predResult.simulation.gop_ev_std}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* ── Sidebar ── */}
-        <aside
-          style={{
-            width: 256,
-            backgroundColor: "var(--nd-surface)",
-            borderLeft: "1px solid var(--nd-border)",
-            display: "flex",
-            flexDirection: "column",
-            overflowY: "auto",
-            flexShrink: 0,
-          }}
-        >
-          {/* Popular vote */}
+        <aside style={{ width: 256, backgroundColor: "var(--nd-surface)", borderLeft: "1px solid var(--nd-border)", display: "flex", flexDirection: "column", overflowY: "auto", flexShrink: 0 }}>
+
+          {/* Popular vote / prediction stats */}
           <div style={{ padding: "16px 16px 14px" }}>
-            <VoteBar
-              gopPct={totalVotes ? stats.gopV / totalVotes : 0}
-              demPct={totalVotes ? stats.demV / totalVotes : 0}
-            />
-            <div style={{ marginTop: 8 }}>
-              <StatRow
-                label="Total votes"
-                value={fmt(totalVotes)}
-              />
-            </div>
+            {year !== "predict" && totalVotes > 0 ? (
+              <>
+                <VoteBar gopPct={stats.gopV / totalVotes} demPct={stats.demV / totalVotes} />
+                <div style={{ marginTop: 8 }}><StatRow label="Total votes" value={fmt(totalVotes)} /></div>
+              </>
+            ) : year === "predict" && predResult ? (
+              <>
+                <div style={{ marginBottom: 8 }}><Label>Predicted popular vote</Label></div>
+                {(() => {
+                  const totalPV = predResult.states.reduce((s, st) => s + st.per_gop + st.per_dem, 0);
+                  const gopPV = predResult.states.reduce((s, st) => s + st.per_gop, 0) / predResult.states.length;
+                  const demPV = predResult.states.reduce((s, st) => s + st.per_dem, 0) / predResult.states.length;
+                  return <VoteBar gopPct={gopPV} demPct={demPV} />;
+                })()}
+              </>
+            ) : (
+              <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--nd-text-disabled)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                { year === "predict" ? "[ Run simulation ]" : "[ Loading... ]"}
+              </div>
+            )}
           </div>
 
           <Divider />
 
-          {/* Counties */}
+          {/* County counts */}
           <div style={{ padding: "12px 16px" }}>
             <StatRow label="R counties" value={fmt(stats.gopC)} color="#D71921" />
             <StatRow label="D counties" value={fmt(stats.demC)} color="#5B9BF6" />
@@ -987,70 +746,31 @@ export default function ElectionDashboard() {
 
           <Divider />
 
-          {/* Hovered state detail */}
+          {/* State detail on hover */}
           {stateDetail ? (
             <>
-              <div
-                style={{
-                  padding: "12px 16px 14px",
-                  backgroundColor: "var(--nd-surface-raised)",
-                }}
-              >
-                <div style={{ marginBottom: 8 }}>
-                  <span
-                    style={{
-                      fontFamily: "var(--font-sans)",
-                      fontWeight: 700,
-                      fontSize: 13,
-                      color:
-                        stateDetail.winner === "gop"
-                          ? "#D71921"
-                          : "#5B9BF6",
-                    }}
-                  >
+              <div style={{ padding: "12px 16px 14px", backgroundColor: "var(--nd-surface-raised)" }}>
+                <div style={{ marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                  <span style={{ fontFamily: "var(--font-sans)", fontWeight: 700, fontSize: 13, color: stateDetail.winner === "gop" ? "#D71921" : "#5B9BF6" }}>
                     {stateDetail.name}
                   </span>
+                  {stateDetail.status && (
+                    <span style={{ fontFamily: "var(--font-mono)", fontSize: 9, letterSpacing: "0.06em", color: "var(--nd-text-disabled)", textTransform: "uppercase" }}>
+                      {stateDetail.status}
+                    </span>
+                  )}
                 </div>
-                <StatRow
-                  label="R vote"
-                  value={pct(stateDetail.gopPct)}
-                  color="#D71921"
-                />
-                <StatRow
-                  label="D vote"
-                  value={pct(stateDetail.demPct)}
-                  color="#5B9BF6"
-                />
-                <StatRow
-                  label="R counties"
-                  value={String(stateDetail.gopCts)}
-                  color="#D71921"
-                />
-                <StatRow
-                  label="D counties"
-                  value={String(stateDetail.demCts)}
-                  color="#5B9BF6"
-                />
+                <StatRow label="R vote"     value={pct(stateDetail.gopPct)} color="#D71921" />
+                <StatRow label="D vote"     value={pct(stateDetail.demPct)} color="#5B9BF6" />
+                <StatRow label="R counties" value={String(stateDetail.gopCts)} color="#D71921" />
+                <StatRow label="D counties" value={String(stateDetail.demCts)} color="#5B9BF6" />
               </div>
               <Divider />
             </>
           ) : (
             <>
-              <div
-                style={{
-                  padding: "12px 16px",
-                  backgroundColor: "var(--nd-surface-raised)",
-                }}
-              >
-                <span
-                  style={{
-                    fontFamily: "var(--font-mono)",
-                    fontSize: 10,
-                    letterSpacing: "0.08em",
-                    textTransform: "uppercase",
-                    color: "var(--nd-text-disabled)",
-                  }}
-                >
+              <div style={{ padding: "12px 16px", backgroundColor: "var(--nd-surface-raised)" }}>
+                <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--nd-text-disabled)" }}>
                   [ Hover a county ]
                 </span>
               </div>
@@ -1062,73 +782,25 @@ export default function ElectionDashboard() {
           <div style={{ padding: "12px 16px" }}>
             <div style={{ marginBottom: 10 }}>
               <Label>
-                Biggest swings
-                {" · "}
-                vs. {PREV_YEAR[year]}
+                {year === "predict" ? "Predicted swings" : "Biggest swings"}
+                {" · "}vs. {PREV_YEAR[year]}
               </Label>
             </div>
             <div style={{ display: "flex", flexDirection: "column" }}>
               {swings.map((c, i) => {
                 const toGOP = c.delta_per_gop > 0;
                 return (
-                  <div
-                    key={c.county_fips}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      padding: "7px 0",
-                      borderBottom:
-                        i < swings.length - 1
-                          ? "1px solid var(--nd-border)"
-                          : "none",
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: 3,
-                        height: 28,
-                        backgroundColor: toGOP ? "#D71921" : "#5B9BF6",
-                        flexShrink: 0,
-                        borderRadius: 1,
-                      }}
-                    />
+                  <div key={c.county_fips} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderBottom: i < swings.length - 1 ? "1px solid var(--nd-border)" : "none" }}>
+                    <div style={{ width: 3, height: 28, backgroundColor: toGOP ? "#D71921" : "#5B9BF6", flexShrink: 0, borderRadius: 1, marginTop: "5px" }} />
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div
-                        style={{
-                          fontFamily: "var(--font-sans)",
-                          fontSize: 12,
-                          fontWeight: 500,
-                          color: "var(--nd-text-primary)",
-                          whiteSpace: "nowrap",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                        }}
-                      >
+                      <div style={{ fontFamily: "var(--font-sans)", fontSize: 12, fontWeight: 500, color: "var(--nd-text-primary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                         {c.county}
                       </div>
-                      <div
-                        style={{
-                          fontFamily: "var(--font-mono)",
-                          fontSize: 10,
-                          color: "var(--nd-text-disabled)",
-                          letterSpacing: "0.04em",
-                          marginTop: 1,
-                        }}
-                      >
+                      <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--nd-text-disabled)", letterSpacing: "0.04em", marginTop: 1 }}>
                         {c.state}
                       </div>
                     </div>
-                    <span
-                      style={{
-                        fontFamily: "var(--font-mono)",
-                        fontSize: 11,
-                        fontWeight: 700,
-                        color: toGOP ? "#D71921" : "#5B9BF6",
-                        letterSpacing: "0.02em",
-                        flexShrink: 0,
-                      }}
-                    >
+                    <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, fontWeight: 700, color: toGOP ? "#D71921" : "#5B9BF6", letterSpacing: "0.02em", flexShrink: 0 }}>
                       {toGOP ? "▲R" : "▼D"} {pct(Math.abs(c.delta_per_gop), 1)}
                     </span>
                   </div>
@@ -1141,89 +813,26 @@ export default function ElectionDashboard() {
 
           {/* Search */}
           <div style={{ padding: "12px 16px 16px" }}>
-            <div style={{ marginBottom: 8 }}>
-              <Label>Search county</Label>
-            </div>
+            <div style={{ marginBottom: 8 }}><Label>Search county</Label></div>
             <input
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Maricopa, Arizona…"
-              style={{
-                width: "100%",
-                backgroundColor: "transparent",
-                border: "none",
-                borderBottom: "1px solid var(--nd-border-visible)",
-                color: "var(--nd-text-primary)",
-                fontFamily: "var(--font-mono)",
-                fontSize: 12,
-                padding: "6px 0",
-                outline: "none",
-                letterSpacing: "0.02em",
-              }}
-              onFocus={(e) =>
-                (e.target.style.borderBottomColor = "var(--nd-text-primary)")
-              }
-              onBlur={(e) =>
-                (e.target.style.borderBottomColor = "var(--nd-border-visible)")
-              }
+              style={{ width: "100%", backgroundColor: "transparent", border: "none", borderBottom: "1px solid var(--nd-border-visible)", color: "var(--nd-text-primary)", fontFamily: "var(--font-mono)", fontSize: 12, padding: "6px 0", outline: "none", letterSpacing: "0.02em" }}
+              onFocus={(e) => (e.target.style.borderBottomColor = "var(--nd-text-primary)")}
+              onBlur={(e) => (e.target.style.borderBottomColor = "var(--nd-border-visible)")}
             />
-
             {searchResults.length > 0 && (
               <div style={{ marginTop: 8 }}>
                 {searchResults.map((c, i) => (
-                  <div
-                    key={c.county_fips}
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      padding: "6px 0",
-                      borderBottom:
-                        i < searchResults.length - 1
-                          ? "1px solid var(--nd-border)"
-                          : "none",
-                    }}
-                  >
+                  <div key={c.county_fips} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: i < searchResults.length - 1 ? "1px solid var(--nd-border)" : "none" }}>
                     <div>
-                      <span
-                        style={{
-                          fontFamily: "var(--font-sans)",
-                          fontSize: 12,
-                          color: "var(--nd-text-primary)",
-                        }}
-                      >
-                        {c.county}
-                      </span>
-                      <span
-                        style={{
-                          fontFamily: "var(--font-mono)",
-                          fontSize: 10,
-                          color: "var(--nd-text-disabled)",
-                          marginLeft: 4,
-                        }}
-                      >
-                        {c.state}
-                      </span>
+                      <span style={{ fontFamily: "var(--font-sans)", fontSize: 12, color: "var(--nd-text-primary)" }}>{c.county}</span>
+                      <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--nd-text-disabled)", marginLeft: 4 }}>{c.state}</span>
                     </div>
-                    <span
-                      style={{
-                        fontFamily: "var(--font-mono)",
-                        fontSize: 10,
-                        fontWeight: 700,
-                        color: c.winner === "gop" ? "#D71921" : "#5B9BF6",
-                        letterSpacing: "0.06em",
-                        textTransform: "uppercase",
-                      }}
-                    >
-                      {c.winner === "gop" ? "R" : "D"}
-                      {" "}
-                      {pct(
-                        c.winner === "gop"
-                          ? c.per_gop - c.per_dem
-                          : c.per_dem - c.per_gop,
-                        0
-                      )}
+                    <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, fontWeight: 700, color: c.winner === "gop" ? "#D71921" : "#5B9BF6", letterSpacing: "0.06em", textTransform: "uppercase" }}>
+                      {c.winner === "gop" ? "R" : "D"} {pct(c.winner === "gop" ? c.per_gop - c.per_dem : c.per_dem - c.per_gop, 0)}
                     </span>
                   </div>
                 ))}
@@ -1235,171 +844,49 @@ export default function ElectionDashboard() {
 
       {/* ── Tooltip ── */}
       {tooltip && (
-        <div
-          style={{
-            position: "fixed",
-            left: tooltip.x + 16,
-            top: tooltip.y - 12,
-            backgroundColor: "var(--nd-surface-raised)",
-            border: "1px solid var(--nd-border-visible)",
-            borderRadius: 4,
-            padding: "12px 14px",
-            pointerEvents: "none",
-            zIndex: 50,
-            minWidth: 196,
-          }}
-        >
-          <div
-            style={{
-              fontFamily: "var(--font-sans)",
-              fontWeight: 700,
-              fontSize: 14,
-              color: "var(--nd-text-display)",
-              marginBottom: 2,
-            }}
-          >
+        <div style={{ position: "fixed", left: tooltip.x + 16, top: tooltip.y - 12, backgroundColor: "var(--nd-surface-raised)", border: "1px solid var(--nd-border-visible)", borderRadius: 4, padding: "12px 14px", pointerEvents: "none", zIndex: 50, minWidth: 196 }}>
+          <div style={{ fontFamily: "var(--font-sans)", fontWeight: 700, fontSize: 14, color: "var(--nd-text-display)", marginBottom: 2 }}>
             {tooltip.d.county}
+            {tooltip.d.isPrediction && (
+              <span style={{ fontFamily: "var(--font-mono)", fontSize: 9, color: "var(--nd-accent)", letterSpacing: "0.08em", marginLeft: 8, textTransform: "uppercase" }}>PREDICTED</span>
+            )}
           </div>
-          <div
-            style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: 10,
-              letterSpacing: "0.08em",
-              textTransform: "uppercase",
-              color: "var(--nd-text-disabled)",
-              marginBottom: 12,
-            }}
-          >
+          <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--nd-text-disabled)", marginBottom: 12 }}>
             {tooltip.d.state}
           </div>
 
-          {/* Vote bars */}
-          {[
-            {
-              label: "R",
-              pct: tooltip.d.per_gop,
-              color: "#D71921",
-            },
-            {
-              label: "D",
-              pct: tooltip.d.per_dem,
-              color: "#5B9BF6",
-            },
-          ].map(({ label, pct: p, color }) => (
+          {[{ label: "R", p: tooltip.d.per_gop, color: "#D71921" }, { label: "D", p: tooltip.d.per_dem, color: "#5B9BF6" }].map(({ label, p, color }) => (
             <div key={label} style={{ marginBottom: 6 }}>
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  marginBottom: 3,
-                }}
-              >
-                <span
-                  style={{
-                    fontFamily: "var(--font-mono)",
-                    fontSize: 10,
-                    letterSpacing: "0.06em",
-                    color: "var(--nd-text-secondary)",
-                  }}
-                >
-                  {label}
-                </span>
-                <span
-                  style={{
-                    fontFamily: "var(--font-mono)",
-                    fontSize: 11,
-                    fontWeight: 700,
-                    color,
-                  }}
-                >
-                  {(p * 100).toFixed(1)}%
-                </span>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+                <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, letterSpacing: "0.06em", color: "var(--nd-text-secondary)" }}>{label}</span>
+                <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, fontWeight: 700, color }}>{(p * 100).toFixed(1)}%</span>
               </div>
-              <div
-                style={{
-                  height: 3,
-                  backgroundColor: "var(--nd-border-visible)",
-                  position: "relative",
-                }}
-              >
-                <div
-                  style={{
-                    position: "absolute",
-                    left: 0,
-                    top: 0,
-                    height: "100%",
-                    width: `${p * 100}%`,
-                    backgroundColor: color,
-                  }}
-                />
+              <div style={{ height: 3, backgroundColor: "var(--nd-border-visible)", position: "relative" }}>
+                <div style={{ position: "absolute", left: 0, top: 0, height: "100%", width: `${p * 100}%`, backgroundColor: color }} />
               </div>
             </div>
           ))}
 
-          {/* Demographics */}
-          <div
-            style={{
-              borderTop: "1px solid var(--nd-border)",
-              marginTop: 10,
-              paddingTop: 10,
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: "6px 12px",
-            }}
-          >
-            {[
-              { label: "Votes", value: fmt(tooltip.d.total_votes) },
-              { label: "Population", value: fmt(tooltip.d.pop_total) },
-              { label: "Income", value: money(tooltip.d.median_income) },
-              {
-                label: "College",
-                value: pct(tooltip.d.bachelors_rate / 100),
-              },
-              { label: "Med. Age", value: String(tooltip.d.median_age) },
-              {
-                label: "Unemployed",
-                value: pct(tooltip.d.unemployment_rate / 100),
-              },
-            ].map(({ label, value }) => (
-              <div key={label}>
-                <div
-                  style={{
-                    fontFamily: "var(--font-mono)",
-                    fontSize: 9,
-                    letterSpacing: "0.08em",
-                    textTransform: "uppercase",
-                    color: "var(--nd-text-disabled)",
-                  }}
-                >
-                  {label}
+          {!tooltip.d.isPrediction && (
+            <div style={{ borderTop: "1px solid var(--nd-border)", marginTop: 10, paddingTop: 10, display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 12px" }}>
+              {[
+                { label: "Votes",      value: fmt(tooltip.d.total_votes) },
+                { label: "Population", value: fmt(tooltip.d.pop_total) },
+                { label: "Income",     value: money(tooltip.d.median_income) },
+                { label: "College",    value: pct(tooltip.d.bachelors_rate / 100) },
+                { label: "Med. Age",   value: String(tooltip.d.median_age) },
+                { label: "Unemployed", value: pct(tooltip.d.unemployment_rate / 100) },
+              ].map(({ label, value }) => (
+                <div key={label}>
+                  <div style={{ fontFamily: "var(--font-mono)", fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--nd-text-disabled)" }}>{label}</div>
+                  <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, fontWeight: 700, color: "var(--nd-text-primary)", marginTop: 1 }}>{value}</div>
                 </div>
-                <div
-                  style={{
-                    fontFamily: "var(--font-mono)",
-                    fontSize: 11,
-                    fontWeight: 700,
-                    color: "var(--nd-text-primary)",
-                    marginTop: 1,
-                  }}
-                >
-                  {value}
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
 
-          {mode === "shift" && (
-            <div
-              style={{
-                marginTop: 8,
-                fontFamily: "var(--font-mono)",
-                fontSize: 11,
-                fontWeight: 700,
-                color:
-                  tooltip.d.delta_per_gop > 0 ? "#D71921" : "#5B9BF6",
-                letterSpacing: "0.04em",
-              }}
-            >
+          {(mode === "shift" || tooltip.d.isPrediction) && (
+            <div style={{ marginTop: 8, fontFamily: "var(--font-mono)", fontSize: 11, fontWeight: 700, color: tooltip.d.delta_per_gop > 0 ? "#D71921" : "#5B9BF6", letterSpacing: "0.04em" }}>
               {tooltip.d.delta_per_gop > 0 ? "▲ R +" : "▼ D +"}
               {pct(Math.abs(tooltip.d.delta_per_gop))} vs. {PREV_YEAR[year]}
             </div>
