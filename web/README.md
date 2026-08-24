@@ -5,10 +5,10 @@ The public-facing Next.js application for the U.S. Elections project.
 ## Routes
 
 - `/` — editorial overview and project narrative
-- `/explore` — historical election atlas with state/county views and directional shift markers
-- `/variables` — demographic and socioeconomic maps at state and county level
-- `/simulations` — final predicted map, executed notebook benchmark and model explainability
-- `/results` — searchable state and county election result tables
+- `/explore` — historical-only election atlas plus searchable state/county result tables
+- `/variables` — demographic maps with variable, 2024 winner and combined comparison layers
+- `/results` — reproducible 1,000-run model result, final map, EV distribution and explainability
+- `/simulations` — laboratory for configuring and launching new stochastic runs
 - `/prediction` — model selection and Monte Carlo simulation
 - `/methodology` — data and modelling pipeline
 - `/data` — sources, variable groups and downloadable datasets

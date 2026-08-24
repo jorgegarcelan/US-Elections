@@ -15,7 +15,7 @@ export default function PredictionPage() {
         <div><span className="section-index">Prediction lab / Experimental</span><h1>Model the uncertain.</h1></div>
         <p>Choose an algorithm and number of simulations. Results are estimates based on historical relationships—not forecasts or polling averages.</p>
       </section>
-      <ElectionDashboard initialYear="predict" />
+      <ElectionDashboard initialYear="predict" predictionOnly defaultModel="xgboost" />
       <section className="prediction-notes" aria-label="Prediction caveats">
         <article><span>01</span><h2>What changes</h2><p>The models estimate county-level shifts from historical elections and current census characteristics.</p></article>
         <article><span>02</span><h2>What varies</h2><p>Each simulation varies historical weighting and turnout, producing a distribution of Electoral College outcomes.</p></article>

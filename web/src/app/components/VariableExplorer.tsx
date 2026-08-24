@@ -6,6 +6,7 @@ import Papa from "papaparse";
 
 type VariableKey = "black_rate" | "white_rate" | "hispanic_rate" | "median_income" | "bachelors_rate" | "poverty_rate" | "unemployment_rate" | "median_age" | "pop_total";
 type GeoLevel = "county" | "state";
+type LayerMode = "variable" | "winner" | "compare";
 
 interface VariableDefinition {
   label: string;
@@ -19,12 +20,16 @@ interface VariableRow {
   county: string;
   state: string;
   population: number;
+  votesGop: number;
+  votesDem: number;
+  winner: "gop" | "dem";
   values: Record<VariableKey, number>;
 }
 
 interface StateVariableRow {
   state: string;
   population: number;
+  winner: "gop" | "dem";
   values: Record<VariableKey, number>;
 }
 
@@ -34,6 +39,7 @@ interface VariableTooltip {
   name: string;
   state?: string;
   value: number;
+  winner: "gop" | "dem";
 }
 
 const VARIABLE_DEFINITIONS: Record<VariableKey, VariableDefinition> = {
@@ -69,6 +75,7 @@ export default function VariableExplorer() {
   const [geoData, setGeoData] = useState<object | null>(null);
   const [variable, setVariable] = useState<VariableKey>("black_rate");
   const [geoLevel, setGeoLevel] = useState<GeoLevel>("county");
+  const [layer, setLayer] = useState<LayerMode>("compare");
   const [tooltip, setTooltip] = useState<VariableTooltip | null>(null);
 
   useEffect(() => {
@@ -88,6 +95,9 @@ export default function VariableExplorer() {
           county: raw.county,
           state: raw.state,
           population: Number(raw.pop_total) || 0,
+          votesGop: Number(raw.votes_gop) || 0,
+          votesDem: Number(raw.votes_dem) || 0,
+          winner: raw.winner === "dem" ? "dem" : "gop",
           values,
         };
       }
@@ -97,13 +107,17 @@ export default function VariableExplorer() {
   }, []);
 
   const stateRows = useMemo(() => {
-    const accumulators: Record<string, { population: number; weighted: Record<VariableKey, number> }> = {};
+    const accumulators: Record<string, { population: number; votesGop: number; votesDem: number; weighted: Record<VariableKey, number> }> = {};
     for (const row of Object.values(rows)) {
       const accumulator = accumulators[row.state] ??= {
         population: 0,
+        votesGop: 0,
+        votesDem: 0,
         weighted: Object.fromEntries(VARIABLE_KEYS.map((key) => [key, 0])) as Record<VariableKey, number>,
       };
       accumulator.population += row.population;
+      accumulator.votesGop += row.votesGop;
+      accumulator.votesDem += row.votesDem;
       for (const key of VARIABLE_KEYS) {
         accumulator.weighted[key] += key === "pop_total" ? row.values[key] : row.values[key] * row.population;
       }
@@ -116,7 +130,7 @@ export default function VariableExplorer() {
           ? accumulator.weighted[key]
           : accumulator.weighted[key] / Math.max(accumulator.population, 1);
       }
-      result[state] = { state, population: accumulator.population, values };
+      result[state] = { state, population: accumulator.population, winner: accumulator.votesGop > accumulator.votesDem ? "gop" : "dem", values };
     }
     return result;
   }, [rows]);
@@ -152,6 +166,11 @@ export default function VariableExplorer() {
               <button key={level} type="button" aria-pressed={geoLevel === level} onClick={() => setGeoLevel(level)}>{level}</button>
             ))}
           </div>
+          <div className="variable-layer" aria-label="Map layer">
+            {(["variable", "winner", "compare"] as LayerMode[]).map((option) => (
+              <button key={option} type="button" aria-pressed={layer === option} onClick={() => setLayer(option)}>{option === "winner" ? "2024 winner" : option}</button>
+            ))}
+          </div>
         </div>
       </header>
 
@@ -167,13 +186,16 @@ export default function VariableExplorer() {
                     const county = rows[fips];
                     const item = geoLevel === "state" && county ? stateRows[county.state] : county;
                     const value = item?.values[variable];
+                    const winner = item?.winner;
+                    const variableFill = value === undefined ? "#2d2d28" : colorForValue(value, domain.low, domain.high);
+                    const winnerColor = winner === "gop" ? "#D71921" : winner === "dem" ? "#5B9BF6" : "#2d2d28";
                     return (
                       <Geography
                         key={geography.rsmKey}
                         geography={geography}
-                        fill={value === undefined ? "#2d2d28" : colorForValue(value, domain.low, domain.high)}
-                        stroke={geoLevel === "state" ? "rgba(0,0,0,.16)" : "#080806"}
-                        strokeWidth={geoLevel === "state" ? 0.2 : 0.5}
+                        fill={layer === "winner" ? winnerColor : variableFill}
+                        stroke={layer === "compare" ? winnerColor : geoLevel === "state" ? "rgba(0,0,0,.16)" : "#080806"}
+                        strokeWidth={layer === "compare" ? (geoLevel === "state" ? 0.65 : 0.85) : geoLevel === "state" ? 0.2 : 0.5}
                         style={{ default: { outline: "none" }, hover: { outline: "none", filter: "brightness(1.25)" }, pressed: { outline: "none" } }}
                         onMouseEnter={(event) => {
                           if (!item || value === undefined) return;
@@ -183,6 +205,7 @@ export default function VariableExplorer() {
                             name: geoLevel === "state" ? item.state : (item as VariableRow).county,
                             state: geoLevel === "county" ? (item as VariableRow).state : undefined,
                             value,
+                            winner: item.winner,
                           });
                         }}
                         onMouseLeave={() => setTooltip(null)}
@@ -193,11 +216,16 @@ export default function VariableExplorer() {
               </ZoomableGroup>
             </ComposableMap>
           )}
-          <div className="variable-legend">
-            <span>{formatValue(domain.low, definition.format)}</span>
-            <i aria-hidden="true" />
-            <span>{formatValue(domain.high, definition.format)}</span>
-          </div>
+          {layer === "winner" ? (
+            <div className="winner-layer-legend"><span><i className="is-gop" />Republican winner</span><span><i className="is-dem" />Democratic winner</span></div>
+          ) : (
+            <div className="variable-legend">
+              <span>{formatValue(domain.low, definition.format)}</span>
+              <i aria-hidden="true" />
+              <span>{formatValue(domain.high, definition.format)}</span>
+              {layer === "compare" && <b><em className="gop-border" /> R border <em className="dem-border" /> D border</b>}
+            </div>
+          )}
         </div>
 
         <aside className="variable-sidebar">
@@ -225,6 +253,7 @@ export default function VariableExplorer() {
           {tooltip.state && <span>{tooltip.state}</span>}
           <em>{definition.shortLabel}</em>
           <b>{formatValue(tooltip.value, definition.format)}</b>
+          <span className={tooltip.winner === "gop" ? "tooltip-winner-gop" : "tooltip-winner-dem"}>{tooltip.winner === "gop" ? "Republican winner" : "Democratic winner"}</span>
         </div>
       )}
     </section>

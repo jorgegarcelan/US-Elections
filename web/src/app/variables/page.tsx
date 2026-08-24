@@ -13,7 +13,7 @@ export default function VariablesPage() {
       <SiteHeader />
       <section className="dashboard-intro variable-intro">
         <div><span className="section-index">Explore / Census variables</span><h1>See the variables behind the vote.</h1></div>
-        <p>Move between county and state views to compare race, income, education, age and economic conditions across the country.</p>
+        <p>Move between county and state views, then switch between the census variable, the 2024 winner map or a combined layer with party-colored borders.</p>
       </section>
       <VariableExplorer />
     </main>

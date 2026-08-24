@@ -60,7 +60,7 @@ export default function Home() {
       </section>
 
       <section className="model-teaser">
-        <div className="model-copy"><p className="section-index">04 / The model</p><h2>From historical patterns to possible outcomes.</h2><p>We combine electoral history with demographic and socioeconomic data, compare several algorithms and run Monte Carlo simulations to quantify uncertainty—not to pretend it does not exist.</p><Link className="button button-light" href="/simulations">See 1,000 simulations →</Link></div>
+        <div className="model-copy"><p className="section-index">04 / The model</p><h2>From historical patterns to possible outcomes.</h2><p>We combine electoral history with demographic and socioeconomic data, compare several algorithms and run Monte Carlo simulations to quantify uncertainty—not to pretend it does not exist.</p><Link className="button button-light" href="/results">See our results →</Link></div>
         <div className="model-console" aria-label="Model pipeline overview">
           <div><span>Input</span><strong>Census ACS + election results</strong></div><div><span>Models</span><strong>Ridge · Random Forest · XGBoost</strong></div><div><span>Scale</span><strong>County → State → Electoral College</strong></div><div><span>Output</span><strong>Vote share + win probability</strong></div>
         </div>

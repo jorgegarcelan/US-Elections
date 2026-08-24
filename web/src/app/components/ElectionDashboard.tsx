@@ -69,9 +69,10 @@ interface PredState {
   electoral_votes: number;
   status: string;
   assumption?: boolean;
+  gop_win_prob?: number;
 }
 
-interface PredResult {
+export interface PredResult {
   counties: PredCounty[];
   states: PredState[];
   electoral: { dem: number; gop: number; unallocated?: number; winner: string };
@@ -84,6 +85,14 @@ interface PredResult {
     gop_ev_mean: number;
     dem_ev_std: number;
     gop_ev_std: number;
+    dem_ev_p05: number;
+    dem_ev_p50: number;
+    dem_ev_p95: number;
+    gop_ev_p05: number;
+    gop_ev_p50: number;
+    gop_ev_p95: number;
+    ev_distribution: { gop_ev: number; dem_ev: number; count: number; probability: number }[];
+    seed?: number | null;
     dem_popular_share: number;
     gop_popular_share: number;
   };
@@ -373,6 +382,10 @@ interface ElectionDashboardProps {
   defaultModel?: PredModel;
   defaultNSim?: number;
   autoRun?: boolean;
+  historicalOnly?: boolean;
+  predictionSeed?: number;
+  onPredictionComplete?: (result: PredResult) => void;
+  lockPredictionConfig?: boolean;
 }
 
 export default function ElectionDashboard({
@@ -381,6 +394,10 @@ export default function ElectionDashboard({
   defaultModel = "ridge",
   defaultNSim = 200,
   autoRun = false,
+  historicalOnly = false,
+  predictionSeed,
+  onPredictionComplete,
+  lockPredictionConfig = false,
 }: ElectionDashboardProps) {
   const [year, setYear]           = useState<Year>(initialYear);
   const [mode, setMode]           = useState<MapMode>("winner");
@@ -465,16 +482,19 @@ export default function ElectionDashboard({
     setPredLoading(true);
     setPredError(null);
     try {
-      const res = await fetch(`/api/predict?n_sim=${nSim}&model=${predModel}`);
+      const query = new URLSearchParams({ n_sim: String(nSim), model: predModel });
+      if (predictionSeed !== undefined) query.set("seed", String(predictionSeed));
+      const res = await fetch(`/api/predict?${query}`);
       if (!res.ok) throw new Error(`API error ${res.status}`);
       const data: PredResult = await res.json();
       setPredResult(data);
+      onPredictionComplete?.(data);
     } catch (e) {
       setPredError(e instanceof Error ? e.message : "Unknown error");
     } finally {
       setPredLoading(false);
     }
-  }, [predModel, nSim]);
+  }, [predModel, nSim, onPredictionComplete, predictionSeed]);
 
   useEffect(() => {
     if (!autoRun || didAutoRun.current) return;
@@ -672,7 +692,7 @@ export default function ElectionDashboard({
 
         <div className="dashboard-controls" style={{ display: "flex", gap: 10, alignItems: "center" }}>
           {/* Predict controls */}
-          {year === "predict" && (
+          {year === "predict" && !lockPredictionConfig && (
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               {/* Model selector */}
               <SegmentedControl<PredModel>
@@ -748,7 +768,7 @@ export default function ElectionDashboard({
                 { value: "2016",    label: "2016" },
                 { value: "2020",    label: "2020" },
                 { value: "2024",    label: "2024" },
-                { value: "predict", label: "Predict" },
+                ...(!historicalOnly ? [{ value: "predict" as Year, label: "Predict" }] : []),
               ]}
               value={year}
               onChange={setYear}

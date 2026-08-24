@@ -5,7 +5,7 @@ Replicates the Monte-Carlo simulation from simulation.ipynb
 
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Optional
 
 import joblib
 import numpy as np
@@ -111,6 +111,7 @@ def run_simulation(
     algo:   str,
     models: dict,
     data:   dict,
+    seed:   Optional[int] = None,
 ) -> dict:
     d            = data
     X_sim        = d["X_sim"]
@@ -152,8 +153,9 @@ def run_simulation(
     acc_votes_t  = np.zeros(n_counties)
 
     sim_results = []  # (dem_ev, gop_ev, winner) per run
+    state_win_counts: dict[str, dict[str, int]] = {}
 
-    rng = np.random.default_rng()
+    rng = np.random.default_rng(seed)
 
     for _ in range(n_sim):
         # Random weights (mirror notebook)
@@ -192,7 +194,13 @@ def run_simulation(
             votes_g=("votes_g", "sum"),
             votes_t=("votes_t", "sum"),
         ).reset_index()
-        agg["winner"] = np.where(agg["votes_d"] > agg["votes_g"], "dem", "gop")
+        # simulation.ipynb resolves the state contest as a two-party share:
+        # Per_dem = Votes_dem / Votes_total and Per_gop = 1 - Per_dem.
+        agg["per_d"] = agg["votes_d"] / agg["votes_t"]
+        agg["winner"] = np.where(agg["per_d"] >= 0.5, "dem", "gop")
+        for state_row in agg.itertuples():
+            counts = state_win_counts.setdefault(state_row.state, {"dem": 0, "gop": 0})
+            counts[state_row.winner] += 1
 
         merged = seats.merge(agg[["state", "winner"]], on="state", how="inner")
         ev = merged.groupby("winner")["ElectoralVotes2024"].sum().to_dict()
@@ -217,8 +225,8 @@ def run_simulation(
     counties = []
     for i in range(n_counties):
         pd_  = float(avg_per_dem[i])
-        pg_  = float(avg_per_gop[i])
-        winner = "dem" if pd_ > pg_ else "gop"
+        pg_  = 1.0 - pd_
+        winner = "dem" if pd_ >= 0.5 else "gop"
         counties.append({
             "fips":     county_fips[i],
             "county":   county_names[i],
@@ -245,8 +253,8 @@ def run_simulation(
         votes_t=("votes_t", "sum"),
     ).reset_index()
     agg_s["per_d"]   = agg_s["votes_d"] / agg_s["votes_t"]
-    agg_s["per_g"]   = agg_s["votes_g"] / agg_s["votes_t"]
-    agg_s["winner"]  = np.where(agg_s["per_d"] > agg_s["per_g"], "dem", "gop")
+    agg_s["per_g"]   = 1.0 - agg_s["per_d"]
+    agg_s["winner"]  = np.where(agg_s["per_d"] >= 0.5, "dem", "gop")
     agg_s["diff"]    = (agg_s["per_d"] - agg_s["per_g"]) * 100
 
     def classify(diff):
@@ -270,6 +278,7 @@ def run_simulation(
             "winner":          row["winner"],
             "electoral_votes": int(row["ElectoralVotes2024"]),
             "status":          row["status"],
+            "gop_win_prob":    round(state_win_counts.get(row["state"], {}).get("gop", 0) / n_sim, 3),
         }
         for _, row in merged_s.iterrows()
     ]
@@ -282,6 +291,7 @@ def run_simulation(
         "electoral_votes": alaska_ev,
         "status":          "Assumed Republican",
         "assumption":      True,
+        "gop_win_prob":    1.0,
     })
 
     # Electoral college totals from averaged state calls
@@ -296,6 +306,16 @@ def run_simulation(
     wins   = [r[2] for r in sim_results]
     dem_p  = wins.count("dem") / n_sim
     gop_p  = wins.count("gop") / n_sim
+    unique_gop_ev, outcome_counts = np.unique(evs_g, return_counts=True)
+    ev_distribution = [
+        {
+            "gop_ev": int(gop_ev),
+            "dem_ev": int(538 - gop_ev),
+            "count": int(count),
+            "probability": round(float(count / n_sim), 4),
+        }
+        for gop_ev, count in zip(unique_gop_ev, outcome_counts)
+    ]
 
     return {
         "counties":   counties,
@@ -315,8 +335,16 @@ def run_simulation(
             "gop_ev_mean":  round(float(np.mean(evs_g)), 1),
             "dem_ev_std":   round(float(np.std(evs_d)),  1),
             "gop_ev_std":   round(float(np.std(evs_g)),  1),
-            "dem_popular_share": round(float(avg_votes_d.sum() / (avg_votes_d.sum() + avg_votes_g.sum())), 4),
-            "gop_popular_share": round(float(avg_votes_g.sum() / (avg_votes_d.sum() + avg_votes_g.sum())), 4),
+            "dem_ev_p05":   round(float(np.quantile(evs_d, 0.05)), 1),
+            "dem_ev_p50":   round(float(np.quantile(evs_d, 0.50)), 1),
+            "dem_ev_p95":   round(float(np.quantile(evs_d, 0.95)), 1),
+            "gop_ev_p05":   round(float(np.quantile(evs_g, 0.05)), 1),
+            "gop_ev_p50":   round(float(np.quantile(evs_g, 0.50)), 1),
+            "gop_ev_p95":   round(float(np.quantile(evs_g, 0.95)), 1),
+            "ev_distribution": ev_distribution,
+            "seed": seed,
+            "dem_popular_share": round(float(avg_votes_d.sum() / avg_votes_t.sum()), 4),
+            "gop_popular_share": round(float(1.0 - (avg_votes_d.sum() / avg_votes_t.sum())), 4),
         },
     }
 
@@ -378,7 +406,8 @@ def explain(
 def predict(
     n_sim: int = Query(default=200, ge=10, le=1000),
     model: Literal["xgboost", "random_forest", "ridge"] = Query(default="xgboost"),
+    seed: Optional[int] = Query(default=None, ge=0, le=2_147_483_647),
 ):
     if not state.get("data") or not state.get("models"):
         raise HTTPException(503, "Server not ready")
-    return run_simulation(n_sim, model, state["models"], state["data"])
+    return run_simulation(n_sim, model, state["models"], state["data"], seed)
