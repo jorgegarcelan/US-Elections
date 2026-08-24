@@ -10,6 +10,7 @@ from typing import Literal, Optional
 import joblib
 import numpy as np
 import pandas as pd
+import xgboost as xgb
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -400,6 +401,95 @@ def explain(
         "features": features,
         "note": "Global association within the fitted model; it is not a causal effect.",
     }
+
+
+@app.get("/explain-local")
+def explain_local(
+    limit: int = Query(default=280, ge=80, le=500),
+):
+    """Return county-level XGBoost contributions for a compact SHAP beeswarm."""
+    models = state.get("models", {})
+    data = state.get("data")
+    if not models or not data:
+        raise HTTPException(503, "Server not ready")
+
+    cache_key = f"local_explain_{limit}"
+    if cache_key in state:
+        return state[cache_key]
+
+    frame = data["X_sim"]
+    accumulated: dict[str, np.ndarray] = {}
+    contribution_sets = 0
+
+    for year in ("2016", "2020"):
+        dem_model = models.get(f"xgboost_delta_dem_{year}")
+        gop_model = models.get(f"xgboost_delta_gop_{year}")
+        if dem_model is None or gop_model is None:
+            continue
+
+        def local_contributions(estimator):
+            names = list(getattr(estimator, "feature_names_in_", []))
+            aligned = frame.reindex(columns=names, fill_value=0)
+            matrix = xgb.DMatrix(aligned, feature_names=names)
+            values = estimator.get_booster().predict(matrix, pred_contribs=True)[:, :-1]
+            return names, values
+
+        dem_names, dem_values = local_contributions(dem_model)
+        gop_names, gop_values = local_contributions(gop_model)
+        dem_lookup = {name: dem_values[:, index] for index, name in enumerate(dem_names)}
+        gop_lookup = {name: gop_values[:, index] for index, name in enumerate(gop_names)}
+
+        for name in set(dem_lookup) | set(gop_lookup):
+            if str(name).startswith("state_"):
+                continue
+            dem_contribution = dem_lookup.get(name, np.zeros(len(frame)))
+            gop_contribution = gop_lookup.get(name, np.zeros(len(frame)))
+            accumulated[name] = accumulated.get(name, np.zeros(len(frame))) + gop_contribution - dem_contribution
+        contribution_sets += 1
+
+    if contribution_sets == 0:
+        raise HTTPException(503, "Local XGBoost contributions unavailable")
+
+    averaged = {name: values / contribution_sets for name, values in accumulated.items()}
+    top_features = sorted(averaged, key=lambda name: float(np.mean(np.abs(averaged[name]))), reverse=True)[:6]
+    county_names = data["county_names"]
+    state_names = data["state_names"]
+    county_fips = data["county_fips"]
+    feature_rows = []
+
+    for feature in top_features:
+        contributions = averaged[feature]
+        raw_values = pd.to_numeric(frame[feature], errors="coerce").fillna(0).to_numpy(dtype=float)
+        value_ranks = pd.Series(raw_values).rank(method="average", pct=True).to_numpy(dtype=float)
+        ordered = np.argsort(contributions)
+        sample_positions = np.linspace(0, len(ordered) - 1, min(limit, len(ordered)), dtype=int)
+        sample_indices = ordered[sample_positions]
+        points = [
+            {
+                "fips": str(county_fips[index]),
+                "county": str(county_names[index]),
+                "state": str(state_names[index]),
+                "contribution": round(float(contributions[index]), 4),
+                "feature_value": round(float(raw_values[index]), 4),
+                "value_percentile": round(float(value_ranks[index]), 4),
+            }
+            for index in sample_indices
+        ]
+        feature_rows.append({
+            "feature": feature,
+            "mean_abs_contribution": round(float(np.mean(np.abs(contributions))), 4),
+            "points": points,
+        })
+
+    response = {
+        "model": "xgboost",
+        "method": "native XGBoost local contributions",
+        "unit": "percentage-point contribution to the modeled Republican-minus-Democratic shift",
+        "features": feature_rows,
+        "note": "Local model attribution, averaged across the 2016 and 2020 target models; not a causal effect.",
+    }
+    state[cache_key] = response
+    return response
 
 
 @app.get("/predict")

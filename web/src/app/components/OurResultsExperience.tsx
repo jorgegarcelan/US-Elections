@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import ElectionDashboard, { type PredResult } from "./ElectionDashboard";
 import ModelExplainability from "./ModelExplainability";
+import ResultsVisualStory from "./ResultsVisualStory";
 
 const ELECTORAL_REGIONS = [
   {
@@ -315,6 +316,8 @@ export default function OurResultsExperience() {
         onPredictionComplete={setResult}
         lockPredictionConfig
       />
+
+      {result && <ResultsVisualStory result={result} />}
 
       <section className="simulation-distribution">
         <div className="distribution-heading">
