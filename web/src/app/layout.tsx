@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Space_Grotesk, Space_Mono, Doto } from "next/font/google";
+import { Space_Grotesk, Space_Mono, Doto, Newsreader } from "next/font/google";
 import "./globals.css";
 
 const spaceGrotesk = Space_Grotesk({
@@ -20,9 +20,28 @@ const doto = Doto({
   weight: ["400", "700"],
 });
 
+const newsreader = Newsreader({
+  subsets: ["latin"],
+  variable: "--font-newsreader",
+  style: ["normal", "italic"],
+  weight: ["400", "500"],
+});
+
 export const metadata: Metadata = {
-  title: "U.S. Elections",
-  description: "County-level US presidential election results · 2016–2024",
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"),
+  title: { default: "County by County — U.S. Elections", template: "%s — County by County" },
+  description: "Explore U.S. presidential elections, demographics and machine-learning predictions at county level.",
+  openGraph: {
+    title: "County by County — U.S. Elections",
+    description: "Three elections, 3,107 counties and a model exploring how people and place shape the vote.",
+    images: [{ url: "/og.png", width: 1200, height: 630, alt: "County by County — U.S. Elections, 2016 to 2024" }],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "County by County — U.S. Elections",
+    description: "Three elections, 3,107 counties and a model exploring how people and place shape the vote.",
+    images: ["/og.png"],
+  },
 };
 
 export default function RootLayout({
@@ -31,9 +50,10 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${spaceGrotesk.variable} ${spaceMono.variable} ${doto.variable} h-full`}
+      data-scroll-behavior="smooth"
+      className={`${spaceGrotesk.variable} ${spaceMono.variable} ${doto.variable} ${newsreader.variable}`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body>{children}</body>
     </html>
   );
 }

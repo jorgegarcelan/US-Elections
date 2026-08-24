@@ -1,63 +1,62 @@
-# US Elections Prediction
+# County by County — U.S. Elections
 
-![Elections Banner](https://www.fairus.org/sites/default/files/styles/hero_basic_page_fullsize/public/images/iStock-478038889.jpg.webp?itok=B-BALXpW)
+An interactive data story about the 2016, 2020 and 2024 U.S. presidential elections. The project connects county-level election returns with demographic and socioeconomic data, then uses several machine-learning models and Monte Carlo simulation to explore possible outcomes.
 
-## 📌 Descripción
-Este repositorio contiene un modelo de predicción electoral para las elecciones presidenciales de EE.UU. en 2024. Se utilizan datos electorales por condado de años anteriores, junto con características demográficas y socioeconómicas, para estimar el ganador en cada región y, finalmente, el presidente electo.
+## What is included
 
-## 📊 Datos Utilizados [TBD]
-Los datos provienen de diversas fuentes, incluyendo:
-- 🗳️ **Resultados electorales por condado**
-- 📈 **Datos socioeconómicos y demográficos** (ingresos, educación, densidad poblacional, etc.)
-- 📍 **Distribución geográfica y tendencias históricas**
+- A multi-page Next.js website with an editorial home, interactive atlas, prediction lab, methodology and data downloads.
+- Harmonised county datasets for the 2016, 2020 and 2024 cycles.
+- Census ACS variables covering population, education, race, income, employment and other local characteristics.
+- Ridge, Random Forest and XGBoost delta models.
+- A FastAPI service that aggregates county predictions into state results and Electoral College simulations.
+- Jupyter notebooks documenting collection, processing, analysis, modelling and simulation.
 
-## 🏗️ Estructura del Proyecto
-```
-📂 US-Elections-Prediction
- ├── 📄 README.md
- ├── 📄 .gitignore
- ├── 📄 .gitkeep
- ├── 📄 models.txt          # Registro de modelos probados
- ├── 📂 notebooks/          # Jupyter Notebooks con análisis exploratorio y modelado
- │   ├── census_api.ipynb   # Obtención de datos del censo
- │   ├── data_analysis.ipynb # Análisis exploratorio de datos
- │   ├── gwr.ipynb          # Regresión geográficamente ponderada
- │   ├── process_data.ipynb # Preprocesamiento de datos
- │   ├── regression.ipynb   # Modelos de regresión
- │   ├── simulation.ipynb   # Simulación de escenarios electorales
- │   ├── unsupervised.ipynb # Métodos no supervisados para análisis
+## Project structure
+
+```text
+api/             FastAPI prediction service
+data/            Raw and prepared tabular datasets
+geo/             Census county boundaries
+imgs/            Analysis exports and figures
+models/          Trained model artifacts
+web/             Next.js website
+*.ipynb          Reproducible analysis pipeline
 ```
 
-## 📌 Slides
-Las slides de este proyecto se pueden acceder en el siguiente ![enlace](https://www.canva.com/design/DAGhOyvtYYc/bwHgPxPu4kyQ58UTsgYpWA/edit?utm_content=DAGhOyvtYYc&utm_campaign=designshare&utm_medium=link2&utm_source=sharebutton)
+## Run locally
 
-## 📊 Visualización de resultados: [TBD]
-Los resultados pueden visualizarse en mapas interactivos y gráficos comparativos.
+### 1. Prediction API
 
-## 🚀 Instalación y Uso
-1. Clonar el repositorio:
-   ```bash
-   git clone https://github.com/jorgegarcelan/US-Elections.git
-   cd US-Elections
-   ```
-2. Instalar dependencias:
-   ```bash
-   pip install -r requirements.txt
-   ```
-3. Ejecutar el modelo:
-   ```bash
-   python main.py
-   ```
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn api.main:app --reload --port 8000
+```
 
-## 📌 Contribución
-¡Toda contribución es bienvenida! Para colaborar:
-1. Haz un fork del repositorio 📌
-2. Crea una nueva rama (`git checkout -b feature-nueva`)
-3. Sube tus cambios (`git commit -m 'Descripción' && git push origin feature-nueva`)
-4. Abre un Pull Request 🚀
+The API exposes `GET /health` and `GET /predict?n_sim=200&model=ridge`.
 
-## 📜 Licencia
-Este proyecto está bajo la licencia **MIT**.
+### 2. Website
 
----
-✨ *Desarrollado por  [Lucía Cordero](https://github.com/lucia-corsan) y [Jorge Garcelán](https://github.com/jorgegarcelan)*
+```bash
+cd web
+cp .env.example .env.local
+npm install
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000). The website calls its own `/api/predict` route, which proxies to `PREDICTION_API_URL`.
+
+## Interpretation and limitations
+
+- County deltas are stored and displayed in percentage points.
+- Popular-vote figures in the atlas show the two-party vote share.
+- Alaska is not included in county modelling because its election reporting geography is not directly comparable; its three electoral votes remain unallocated in model outputs.
+- The model is exploratory. It does not ingest live polling, candidates, campaign events or causal effects.
+- ACS values are survey estimates and neighbouring counties are not statistically independent.
+
+## Authors
+
+[Lucía Cordero](https://github.com/lucia-corsan) and [Jorge Garcelán](https://github.com/jorgegarcelan).
+
+MIT License.

@@ -66,7 +66,7 @@ interface PredState {
 interface PredResult {
   counties: PredCounty[];
   states: PredState[];
-  electoral: { dem: number; gop: number; winner: string };
+  electoral: { dem: number; gop: number; unallocated?: number; winner: string };
   simulation: {
     n_sim: number;
     model: string;
@@ -76,6 +76,8 @@ interface PredResult {
     gop_ev_mean: number;
     dem_ev_std: number;
     gop_ev_std: number;
+    dem_popular_share: number;
+    gop_popular_share: number;
   };
 }
 
@@ -117,12 +119,13 @@ function marginFill(pg: number, pd: number) {
 }
 
 function shiftFill(delta: number) {
-  if (delta > 0.12) return "#D71921";
-  if (delta > 0.06) return "rgba(215,25,33,0.65)";
-  if (delta > 0.02) return "rgba(215,25,33,0.30)";
-  if (delta > -0.02) return "#2A2A2A";
-  if (delta > -0.06) return "rgba(91,155,246,0.30)";
-  if (delta > -0.12) return "rgba(91,155,246,0.65)";
+  // Delta columns are stored as percentage points, not 0—1 proportions.
+  if (delta > 12) return "#D71921";
+  if (delta > 6) return "rgba(215,25,33,0.65)";
+  if (delta > 2) return "rgba(215,25,33,0.30)";
+  if (delta > -2) return "#2A2A2A";
+  if (delta > -6) return "rgba(91,155,246,0.30)";
+  if (delta > -12) return "rgba(91,155,246,0.65)";
   return "#5B9BF6";
 }
 
@@ -136,6 +139,7 @@ function countyFill(d: CountyData, mode: MapMode) {
 
 const fmt = (n: number) => Math.round(n).toLocaleString("en-US");
 const pct = (n: number, d = 1) => (n * 100).toFixed(d) + "%";
+const points = (n: number, d = 1) => Math.abs(n).toFixed(d) + " pp";
 const money = (n: number) => "$" + Math.round(n).toLocaleString("en-US");
 
 // ── Inline components ──────────────────────────────────────────────────────────
@@ -160,11 +164,12 @@ function SegmentedControl<T extends string>({
   onChange: (v: T) => void;
 }) {
   return (
-    <div style={{ display: "flex", border: "1px solid var(--nd-border-visible)", borderRadius: 4, overflow: "hidden" }}>
+    <div className="segmented-control" style={{ display: "flex", border: "1px solid var(--nd-border-visible)", borderRadius: 4, overflow: "hidden" }}>
       {options.map((opt, i) => (
         <button
           key={opt.value}
           onClick={() => onChange(opt.value)}
+          aria-pressed={value === opt.value}
           style={{
             padding: "6px 14px",
             fontFamily: "var(--font-mono)",
@@ -199,6 +204,7 @@ function ECBar({
   const gopEV = blocks.filter((b) => b.winner === "gop").reduce((s, b) => s + b.ev, 0);
   const demEV = blocks.filter((b) => b.winner === "dem").reduce((s, b) => s + b.ev, 0);
   const total = blocks.reduce((s, b) => s + b.ev, 0) || 538;
+  const unallocatedEV = blocks.filter((b) => b.winner === "unknown").reduce((s, b) => s + b.ev, 0);
 
   const sorted = [
     ...blocks.filter((b) => b.winner === "gop").sort((a, b) => b.ev - a.ev),
@@ -206,7 +212,7 @@ function ECBar({
   ];
 
   return (
-    <div style={{ backgroundColor: "var(--nd-surface)", borderBottom: "1px solid var(--nd-border)", padding: "20px 24px 16px", flexShrink: 0 }}>
+    <div className="ec-bar" style={{ backgroundColor: "var(--nd-surface)", borderBottom: "1px solid var(--nd-border)", padding: "20px 24px 16px", flexShrink: 0 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 10 }}>
         {/* GOP */}
         <div>
@@ -221,6 +227,11 @@ function ECBar({
           <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, letterSpacing: "0.1em", color: "var(--nd-text-disabled)", textTransform: "uppercase" }}>
             270 to win
           </div>
+          {unallocatedEV > 0 && (
+            <div style={{ fontFamily: "var(--font-mono)", fontSize: 9, letterSpacing: "0.08em", color: "var(--nd-text-secondary)", textTransform: "uppercase", marginTop: 3 }}>
+              {unallocatedEV} unallocated
+            </div>
+          )}
           {gopEV >= 270 && <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, letterSpacing: "0.08em", color: "#D71921", textTransform: "uppercase", marginTop: 2 }}>[ R WINS ]</div>}
           {demEV >= 270 && <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, letterSpacing: "0.08em", color: "#5B9BF6", textTransform: "uppercase", marginTop: 2 }}>[ D WINS ]</div>}
           {/* Win probability when in predict mode */}
@@ -287,7 +298,7 @@ function StatRow({ label, value, color }: { label: string; value: string; color?
 function VoteBar({ gopPct, demPct }: { gopPct: number; demPct: number }) {
   return (
     <div>
-      <div style={{ marginBottom: 6 }}><Label>Popular vote</Label></div>
+      <div style={{ marginBottom: 6 }}><Label>Two-party vote share</Label></div>
       {[{ label: "R", p: gopPct, color: "#D71921" }, { label: "D", p: demPct, color: "#5B9BF6" }].map(({ label, p, color }) => (
         <div key={label} style={{ marginBottom: 6 }}>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
@@ -308,24 +319,24 @@ function VoteBar({ gopPct, demPct }: { gopPct: number; demPct: number }) {
 const LEGENDS: Record<MapMode, { color: string; label: string }[]> = {
   winner:  [{ color: "#D71921", label: "Republican" }, { color: "#5B9BF6", label: "Democrat" }],
   margin:  [{ color: "#D71921", label: "R +40%" }, { color: "rgba(215,25,33,0.40)", label: "R +10%" }, { color: "rgba(215,25,33,0.20)", label: "R +1%" }, { color: "#2A2A2A", label: "Toss-up" }, { color: "rgba(91,155,246,0.20)", label: "D +1%" }, { color: "rgba(91,155,246,0.40)", label: "D +10%" }, { color: "#5B9BF6", label: "D +40%" }],
-  shift:   [{ color: "#D71921", label: "R swing +12%" }, { color: "rgba(215,25,33,0.40)", label: "R swing +3%" }, { color: "#2A2A2A", label: "No shift" }, { color: "rgba(91,155,246,0.40)", label: "D swing +3%" }, { color: "#5B9BF6", label: "D swing +12%" }],
+  shift:   [{ color: "#D71921", label: "R swing +12 pp" }, { color: "rgba(215,25,33,0.40)", label: "R swing +3 pp" }, { color: "#2A2A2A", label: "No shift" }, { color: "rgba(91,155,246,0.40)", label: "D swing +3 pp" }, { color: "#5B9BF6", label: "D swing +12 pp" }],
 };
 
 // ── Main ───────────────────────────────────────────────────────────────────────
 
-export default function ElectionDashboard() {
-  const [year, setYear]           = useState<Year>("2024");
+export default function ElectionDashboard({ initialYear = "2024" }: { initialYear?: Year }) {
+  const [year, setYear]           = useState<Year>(initialYear);
   const [mode, setMode]           = useState<MapMode>("winner");
   const [countyMap, setCountyMap] = useState<Record<string, CountyData>>({});
   const [geoData, setGeoData]     = useState<object | null>(null);
   const [seats, setSeats]         = useState<SeatRow[]>([]);
   const [tooltip, setTooltip]     = useState<Tooltip | null>(null);
-  const [loading, setLoading]     = useState(true);
+  const [loadedYear, setLoadedYear] = useState<Exclude<Year, "predict"> | null>(null);
   const [search, setSearch]       = useState("");
   const [hoveredState, setHoveredState] = useState<string | null>(null);
 
   // Prediction state
-  const [predModel, setPredModel]     = useState<PredModel>("xgboost");
+  const [predModel, setPredModel]     = useState<PredModel>("ridge");
   const [nSim, setNSim]               = useState(200);
   const [predLoading, setPredLoading] = useState(false);
   const [predResult, setPredResult]   = useState<PredResult | null>(null);
@@ -347,7 +358,6 @@ export default function ElectionDashboard() {
   // Load CSV when year changes (historical only)
   useEffect(() => {
     if (year === "predict") return;
-    setLoading(true);
     fetch(`/data/final_data_${year}.csv`).then((r) => r.text()).then((t) => {
       const res = Papa.parse<Record<string, string>>(t, { header: true, skipEmptyLines: true });
       const map: Record<string, CountyData> = {};
@@ -366,17 +376,14 @@ export default function ElectionDashboard() {
         };
       }
       setCountyMap(map);
-      setLoading(false);
+      setLoadedYear(year);
     });
   }, [year]);
 
-  // When switching to predict and result exists, populate countyMap from prediction
-  useEffect(() => {
-    if (year !== "predict" || !predResult) {
-      if (year === "predict") setLoading(false);
-      return;
-    }
+  // Prediction results are derived separately so historical data never flashes in prediction mode.
+  const predictionCountyMap = useMemo(() => {
     const map: Record<string, CountyData> = {};
+    if (!predResult) return map;
     for (const c of predResult.counties) {
       map[c.fips] = {
         county_fips: c.fips, county: c.county, state: c.state,
@@ -387,16 +394,17 @@ export default function ElectionDashboard() {
         isPrediction: true,
       };
     }
-    setCountyMap(map);
-    setLoading(false);
-  }, [year, predResult]);
+    return map;
+  }, [predResult]);
+
+  const activeCountyMap = year === "predict" ? predictionCountyMap : countyMap;
 
   // Run prediction
   const runPrediction = useCallback(async () => {
     setPredLoading(true);
     setPredError(null);
     try {
-      const res = await fetch(`http://127.0.0.1:8000/predict?n_sim=${nSim}&model=${predModel}`);
+      const res = await fetch(`/api/predict?n_sim=${nSim}&model=${predModel}`);
       if (!res.ok) throw new Error(`API error ${res.status}`);
       const data: PredResult = await res.json();
       setPredResult(data);
@@ -409,7 +417,7 @@ export default function ElectionDashboard() {
 
   // ── Derived ───────────────────────────────────────────────────────────────────
 
-  const counties = useMemo(() => Object.values(countyMap), [countyMap]);
+  const counties = useMemo(() => Object.values(activeCountyMap), [activeCountyMap]);
 
   const stats = useMemo(() => {
     let gopC = 0, demC = 0, gopV = 0, demV = 0;
@@ -431,10 +439,15 @@ export default function ElectionDashboard() {
 
   const stateBlocks = useMemo((): StateBlock[] => {
     if (year === "predict" && predResult) {
-      return predResult.states.map((s) => ({
-        state: s.state, state_code: s.state_code, ev: s.electoral_votes,
-        winner: s.winner as "gop" | "dem",
-      }));
+      return seats.map((seat) => {
+        const predicted = predResult.states.find((state) => state.state === seat.state);
+        return {
+          state: seat.state,
+          state_code: seat.state_code,
+          ev: seat.ElectoralVotes2024,
+          winner: predicted ? predicted.winner as "gop" | "dem" : "unknown",
+        };
+      });
     }
     return seats.map((s) => {
       const sv = stateVotes[s.state];
@@ -494,10 +507,10 @@ export default function ElectionDashboard() {
   const handleEnter = useCallback(
     (geo: { properties: { STATE: string; COUNTY: string } }, evt: React.MouseEvent) => {
       const fips = geo.properties.STATE + geo.properties.COUNTY;
-      const d = countyMap[fips];
+      const d = activeCountyMap[fips];
       if (d) { setTooltip({ x: evt.clientX, y: evt.clientY, d }); setHoveredState(d.state); }
     },
-    [countyMap]
+    [activeCountyMap]
   );
   const handleMove  = useCallback((evt: React.MouseEvent) => { setTooltip((p) => p && { ...p, x: evt.clientX, y: evt.clientY }); }, []);
   const handleLeave = useCallback(() => { setTooltip(null); setHoveredState(null); }, []);
@@ -507,10 +520,10 @@ export default function ElectionDashboard() {
   // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden", backgroundColor: "var(--nd-black)", fontFamily: "var(--font-sans)" }}>
+    <div className="election-dashboard" style={{ display: "flex", flexDirection: "column", height: "calc(100svh - 72px)", overflow: "hidden", backgroundColor: "var(--nd-black)", fontFamily: "var(--font-sans)" }}>
 
       {/* ── Header ── */}
-      <header style={{ backgroundColor: "var(--nd-surface)", borderBottom: "1px solid var(--nd-border)", padding: "14px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
+      <header className="dashboard-toolbar" style={{ backgroundColor: "var(--nd-surface)", borderBottom: "1px solid var(--nd-border)", padding: "14px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
           <div style={{ width: 8, height: 8, borderRadius: "50%", backgroundColor: "var(--nd-accent)", flexShrink: 0 }} />
           <div>
@@ -523,7 +536,7 @@ export default function ElectionDashboard() {
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+        <div className="dashboard-controls" style={{ display: "flex", gap: 10, alignItems: "center" }}>
           {/* Predict controls */}
           {year === "predict" && (
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -539,6 +552,7 @@ export default function ElectionDashboard() {
               />
               {/* N simulations */}
               <select
+                aria-label="Number of Monte Carlo simulations"
                 value={nSim}
                 onChange={(e) => setNSim(Number(e.target.value))}
                 style={{
@@ -612,16 +626,17 @@ export default function ElectionDashboard() {
       <ECBar blocks={stateBlocks} predResult={year === "predict" ? predResult : null} />
 
       {/* ── Body ── */}
-      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+      <div className="dashboard-body" style={{ display: "flex", flex: 1, overflow: "hidden" }}>
 
         {/* Map */}
         <div
+          className="dashboard-map"
           style={{ flex: 1, position: "relative", backgroundColor: "var(--nd-black)" }}
           onMouseMove={handleMove}
         >
           {/* Loading / empty states */}
-          {(loading || predLoading) && (
-            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10 }}>
+          {((year !== "predict" && loadedYear !== year) || predLoading) && (
+            <div role="status" aria-live="polite" style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10 }}>
               <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--nd-text-secondary)" }}>
                 {predLoading ? "[ Simulating... ]" : "[ Loading... ]"}
               </span>
@@ -634,8 +649,8 @@ export default function ElectionDashboard() {
                 Select model and run simulation
               </div>
               {predError && (
-                <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--nd-accent)", letterSpacing: "0.06em" }}>
-                  [ ERROR: {predError} ] — Is the API running on port 8000?
+                <div role="alert" style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--nd-accent)", letterSpacing: "0.06em" }}>
+                  [ {predError} ] — The prediction service may be offline.
                 </div>
               )}
             </div>
@@ -643,6 +658,8 @@ export default function ElectionDashboard() {
 
           {geoData && (
             <ComposableMap
+              role="img"
+              aria-label={`County-level election map for ${year === "predict" ? "the current prediction" : year}`}
               projection="geoAlbersUsa"
               style={{ width: "100%", height: "100%" }}
               projectionConfig={{ scale: 1050 }}
@@ -652,7 +669,7 @@ export default function ElectionDashboard() {
                   {({ geographies }: { geographies: Array<{ rsmKey: string; properties: { STATE: string; COUNTY: string } }> }) =>
                     geographies.map((geo) => {
                       const fips = geo.properties.STATE + geo.properties.COUNTY;
-                      const d = countyMap[fips];
+                      const d = activeCountyMap[fips];
                       const dimmed = searchFips !== null && !searchFips.has(fips);
                       const fill = d ? countyFill(d, mode) : "var(--nd-border-visible)";
 
@@ -710,7 +727,7 @@ export default function ElectionDashboard() {
         </div>
 
         {/* ── Sidebar ── */}
-        <aside style={{ width: 256, backgroundColor: "var(--nd-surface)", borderLeft: "1px solid var(--nd-border)", display: "flex", flexDirection: "column", overflowY: "auto", flexShrink: 0 }}>
+        <aside className="dashboard-sidebar" style={{ width: 280, backgroundColor: "var(--nd-surface)", borderLeft: "1px solid var(--nd-border)", display: "flex", flexDirection: "column", overflowY: "auto", flexShrink: 0 }}>
 
           {/* Popular vote / prediction stats */}
           <div style={{ padding: "16px 16px 14px" }}>
@@ -722,12 +739,7 @@ export default function ElectionDashboard() {
             ) : year === "predict" && predResult ? (
               <>
                 <div style={{ marginBottom: 8 }}><Label>Predicted popular vote</Label></div>
-                {(() => {
-                  const totalPV = predResult.states.reduce((s, st) => s + st.per_gop + st.per_dem, 0);
-                  const gopPV = predResult.states.reduce((s, st) => s + st.per_gop, 0) / predResult.states.length;
-                  const demPV = predResult.states.reduce((s, st) => s + st.per_dem, 0) / predResult.states.length;
-                  return <VoteBar gopPct={gopPV} demPct={demPV} />;
-                })()}
+                <VoteBar gopPct={predResult.simulation.gop_popular_share} demPct={predResult.simulation.dem_popular_share} />
               </>
             ) : (
               <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--nd-text-disabled)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
@@ -801,7 +813,7 @@ export default function ElectionDashboard() {
                       </div>
                     </div>
                     <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, fontWeight: 700, color: toGOP ? "#D71921" : "#5B9BF6", letterSpacing: "0.02em", flexShrink: 0 }}>
-                      {toGOP ? "▲R" : "▼D"} {pct(Math.abs(c.delta_per_gop), 1)}
+                      {toGOP ? "▲R" : "▼D"} {points(c.delta_per_gop)}
                     </span>
                   </div>
                 );
@@ -815,6 +827,7 @@ export default function ElectionDashboard() {
           <div style={{ padding: "12px 16px 16px" }}>
             <div style={{ marginBottom: 8 }}><Label>Search county</Label></div>
             <input
+              aria-label="Search for a county or state"
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -888,7 +901,7 @@ export default function ElectionDashboard() {
           {(mode === "shift" || tooltip.d.isPrediction) && (
             <div style={{ marginTop: 8, fontFamily: "var(--font-mono)", fontSize: 11, fontWeight: 700, color: tooltip.d.delta_per_gop > 0 ? "#D71921" : "#5B9BF6", letterSpacing: "0.04em" }}>
               {tooltip.d.delta_per_gop > 0 ? "▲ R +" : "▼ D +"}
-              {pct(Math.abs(tooltip.d.delta_per_gop))} vs. {PREV_YEAR[year]}
+              {points(tooltip.d.delta_per_gop)} vs. {PREV_YEAR[year]}
             </div>
           )}
         </div>

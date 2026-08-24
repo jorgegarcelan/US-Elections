@@ -1,5 +1,6 @@
 *.pdf
 *.png
+!web/public/og.png
 .venv
 .env
 imgs

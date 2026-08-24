@@ -67,6 +67,17 @@ def load_models():
     return available
 
 
+def predict_aligned(model, frame: pd.DataFrame) -> np.ndarray:
+    """Align the current simulation table to the exact training feature schema."""
+    feature_names = getattr(model, "feature_names_in_", None)
+    if feature_names is not None:
+        aligned = frame.reindex(columns=list(feature_names), fill_value=0)
+    else:
+        expected = getattr(model, "n_features_in_", frame.shape[1])
+        aligned = frame.iloc[:, :expected]
+    return model.predict(aligned).astype(float)
+
+
 # ── App lifecycle ─────────────────────────────────────────────────────────────
 
 @asynccontextmanager
@@ -119,10 +130,10 @@ def run_simulation(
         raise HTTPException(400, f"Model not found: {e}")
 
     # Pre-compute deterministic model predictions (same for all simulations)
-    pred_dem_2016 = m_dem_2016.predict(X_sim).astype(float)
-    pred_gop_2016 = m_gop_2016.predict(X_sim).astype(float)
-    pred_dem_2020 = m_dem_2020.predict(X_sim).astype(float)
-    pred_gop_2020 = m_gop_2020.predict(X_sim).astype(float)
+    pred_dem_2016 = predict_aligned(m_dem_2016, X_sim)
+    pred_gop_2016 = predict_aligned(m_gop_2016, X_sim)
+    pred_dem_2020 = predict_aligned(m_dem_2020, X_sim)
+    pred_gop_2020 = predict_aligned(m_gop_2020, X_sim)
 
     # Accumulators
     acc_per_dem  = np.zeros(n_counties)
@@ -272,6 +283,7 @@ def run_simulation(
         "electoral":  {
             "dem":    total_ev_d,
             "gop":    total_ev_g,
+            "unallocated": int(seats[~seats["state"].isin(merged_s["state"])]["ElectoralVotes2024"].sum()),
             "winner": ec_winner,
         },
         "simulation": {
@@ -283,6 +295,8 @@ def run_simulation(
             "gop_ev_mean":  round(float(np.mean(evs_g)), 1),
             "dem_ev_std":   round(float(np.std(evs_d)),  1),
             "gop_ev_std":   round(float(np.std(evs_g)),  1),
+            "dem_popular_share": round(float(avg_votes_d.sum() / (avg_votes_d.sum() + avg_votes_g.sum())), 4),
+            "gop_popular_share": round(float(avg_votes_g.sum() / (avg_votes_d.sum() + avg_votes_g.sum())), 4),
         },
     }
 
