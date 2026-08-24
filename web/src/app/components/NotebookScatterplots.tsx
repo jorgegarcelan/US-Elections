@@ -5,6 +5,7 @@ import Papa from "papaparse";
 
 type ElectionYear = 2016 | 2020 | 2024;
 type Party = "dem" | "gop";
+type ScatterView = "combined" | "states";
 type ScatterKey =
   | "log_pop_total"
   | "median_age"
@@ -53,6 +54,7 @@ interface PointTooltip {
 
 const YEARS: ElectionYear[] = [2016, 2020, 2024];
 const PLOT = { width: 1060, height: 590, left: 76, right: 30, top: 30, bottom: 66 };
+const MINI_PLOT = { width: 320, height: 182, left: 35, right: 12, top: 12, bottom: 28 };
 const EDUCATION_STATES = new Set(["California", "Idaho", "Illinois", "Kentucky", "Maine", "New York", "Oregon", "Pennsylvania", "Vermont", "Washington", "West Virginia", "Wyoming"]);
 const BLACK_SOUTH_STATES = new Set(["Alabama", "Mississippi", "Louisiana", "North Carolina", "South Carolina", "Georgia"]);
 
@@ -136,13 +138,6 @@ function regression(points: Array<{ x: number; y: number }>) {
   return { slope, intercept: yMean - slope * xMean };
 }
 
-function scopeLabel(scope: string) {
-  if (scope === "all") return "All U.S. counties";
-  if (scope === "education") return "Notebook focus · Education states";
-  if (scope === "black-south") return "Notebook focus · Black share / South";
-  return scope;
-}
-
 function associationCopy(value: number) {
   const strength = Math.abs(value) >= 0.5 ? "strong" : Math.abs(value) >= 0.3 ? "clear" : Math.abs(value) >= 0.15 ? "modest" : "weak";
   const direction = value >= 0 ? "positive" : "negative";
@@ -154,7 +149,9 @@ export default function NotebookScatterplots() {
   const [year, setYear] = useState<ElectionYear>(2024);
   const [party, setParty] = useState<Party>("dem");
   const [variable, setVariable] = useState<ScatterKey>("bachelors_rate");
-  const [scope, setScope] = useState("all");
+  const [view, setView] = useState<ScatterView>("combined");
+  const [selectedStates, setSelectedStates] = useState<string[] | null>(null);
+  const [statePickerOpen, setStatePickerOpen] = useState(false);
   const [tooltip, setTooltip] = useState<PointTooltip | null>(null);
 
   useEffect(() => {
@@ -166,11 +163,12 @@ export default function NotebookScatterplots() {
 
   const rows = useMemo(() => datasets[year] ?? [], [datasets, year]);
   const states = useMemo(() => [...new Set(rows.map((row) => row.state))].sort(), [rows]);
-  const selectedRows = useMemo(() => rows.filter((row) => {
-    if (scope === "education") return EDUCATION_STATES.has(row.state);
-    if (scope === "black-south") return BLACK_SOUTH_STATES.has(row.state);
-    return scope === "all" || row.state === scope;
-  }), [rows, scope]);
+  const visibleStateNames = useMemo(() => selectedStates === null ? states : states.filter((state) => selectedStates.includes(state)), [selectedStates, states]);
+  const selectedRows = useMemo(() => {
+    if (selectedStates === null) return rows;
+    const selected = new Set(selectedStates);
+    return rows.filter((row) => selected.has(row.state));
+  }, [rows, selectedStates]);
 
   const chart = useMemo(() => {
     const sourcePoints = selectedRows.flatMap((row) => {
@@ -206,13 +204,43 @@ export default function NotebookScatterplots() {
     };
   }, [party, selectedRows, variable]);
 
+  const stateCharts = useMemo(() => {
+    if (!chart) return [];
+    return visibleStateNames.map((state) => {
+      const points = chart.points.filter((point) => point.state === state);
+      const fit = regression(points);
+      return {
+        state,
+        points,
+        correlation: correlation(points),
+        lineStart: Math.max(0, Math.min(1, fit.intercept + fit.slope * chart.xMin)),
+        lineEnd: Math.max(0, Math.min(1, fit.intercept + fit.slope * chart.xMax)),
+      };
+    }).filter((stateChart) => stateChart.points.length);
+  }, [chart, visibleStateNames]);
+
   const definition = SCATTER_DEFINITIONS[variable];
   const partyLabel = party === "dem" ? "Democratic" : "Republican";
+  const selectionLabel = selectedStates === null
+    ? "All 50 states"
+    : selectedStates.length === 0
+      ? "No states selected"
+      : selectedStates.length === 1
+        ? selectedStates[0]
+        : `${selectedStates.length} states selected`;
 
   function chooseNotebookFocus(nextVariable: ScatterKey) {
     setVariable(nextVariable);
-    if (nextVariable === "bachelors_rate") setScope("education");
-    if (nextVariable === "black_rate") setScope("black-south");
+    if (nextVariable === "bachelors_rate") setSelectedStates([...EDUCATION_STATES]);
+    if (nextVariable === "black_rate") setSelectedStates([...BLACK_SOUTH_STATES]);
+  }
+
+  function toggleState(state: string) {
+    setSelectedStates((current) => {
+      const active = current === null ? states : current;
+      const next = active.includes(state) ? active.filter((item) => item !== state) : [...active, state];
+      return next.length === states.length ? null : next;
+    });
   }
 
   return (
@@ -237,10 +265,14 @@ export default function NotebookScatterplots() {
       <div className="scatter-workbench">
         <header className="scatter-toolbar">
           <div className="scatter-toolbar-copy">
-            <span>{year} county results · {scopeLabel(scope)}</span>
+            <span>{year} county results · {selectionLabel}</span>
             <strong>{definition.label} × {partyLabel} vote</strong>
           </div>
           <div className="scatter-controls">
+            <div className="scatter-segmented" aria-label="Chart layout">
+              <button type="button" aria-pressed={view === "combined"} onClick={() => setView("combined")}>Combined</button>
+              <button type="button" aria-pressed={view === "states"} onClick={() => setView("states")}>State grid</button>
+            </div>
             <div className="scatter-segmented" aria-label="Election year">
               {YEARS.map((option) => <button key={option} type="button" aria-pressed={year === option} onClick={() => setYear(option)}>{option}</button>)}
             </div>
@@ -248,24 +280,36 @@ export default function NotebookScatterplots() {
               <button type="button" aria-pressed={party === "dem"} onClick={() => setParty("dem")}>Dem vote</button>
               <button type="button" aria-pressed={party === "gop"} onClick={() => setParty("gop")}>GOP vote</button>
             </div>
-            <label>
-              <span className="sr-only">Geographic focus</span>
-              <select value={scope} onChange={(event) => setScope(event.target.value)}>
-                <option value="all">All U.S. counties</option>
-                <option value="education">Notebook · Education states</option>
-                <option value="black-south">Notebook · Black share / South</option>
-                <optgroup label="Single state">
-                  {states.map((state) => <option key={state} value={state}>{state}</option>)}
-                </optgroup>
-              </select>
-            </label>
+            <button className="scatter-state-picker-toggle" type="button" aria-expanded={statePickerOpen} onClick={() => setStatePickerOpen((current) => !current)}>
+              States <span>{selectedStates === null ? "50" : selectedStates.length}</span>
+            </button>
           </div>
         </header>
 
+        {statePickerOpen && (
+          <div className="scatter-state-picker">
+            <div className="scatter-state-picker-heading">
+              <div><span>Geographic selection</span><strong>Choose one, several or every state.</strong></div>
+              <div className="scatter-state-actions">
+                <button type="button" onClick={() => setSelectedStates(null)}>All 50</button>
+                <button type="button" onClick={() => setSelectedStates([])}>Clear</button>
+                <button type="button" onClick={() => setSelectedStates([...EDUCATION_STATES])}>Education 12</button>
+                <button type="button" onClick={() => setSelectedStates([...BLACK_SOUTH_STATES])}>Black share / South 6</button>
+              </div>
+            </div>
+            <div className="scatter-state-options" aria-label="States shown">
+              {states.map((state) => {
+                const active = selectedStates === null || selectedStates.includes(state);
+                return <button key={state} type="button" aria-pressed={active} onClick={() => toggleState(state)}>{state}</button>;
+              })}
+            </div>
+          </div>
+        )}
+
         <div className="scatter-stage">
-          <div className="scatter-plot-wrap">
-            {!chart && <div className="scatter-loading">[ Loading notebook data… ]</div>}
-            {chart && (
+          <div className={`scatter-plot-wrap${view === "states" ? " is-grid" : ""}`}>
+            {!chart && !(rows.length > 0 && selectedStates?.length === 0) && <div className="scatter-loading">[ Loading notebook data… ]</div>}
+            {chart && view === "combined" && (
               <svg className="scatter-plot" viewBox={`0 0 ${PLOT.width} ${PLOT.height}`} role="img" aria-label={`${definition.label} versus ${partyLabel} vote share for ${chart.points.length} counties in ${year}`}>
                 <g className="scatter-grid" aria-hidden="true">
                   {[0, .25, .5, .75, 1].map((tick) => (
@@ -301,6 +345,32 @@ export default function NotebookScatterplots() {
                 <text className="scatter-axis-label" transform={`translate(19 ${(PLOT.top + PLOT.height - PLOT.bottom) / 2}) rotate(-90)`} textAnchor="middle">{partyLabel} vote share</text>
               </svg>
             )}
+            {chart && view === "states" && (
+              <div className="scatter-state-grid" aria-label={`Scatterplots by state for ${definition.label}`}>
+                {stateCharts.map((stateChart) => {
+                  const xScale = (value: number) => MINI_PLOT.left + ((value - chart.xMin) / (chart.xMax - chart.xMin)) * (MINI_PLOT.width - MINI_PLOT.left - MINI_PLOT.right);
+                  const yScale = (value: number) => MINI_PLOT.top + (1 - value) * (MINI_PLOT.height - MINI_PLOT.top - MINI_PLOT.bottom);
+                  return (
+                    <article className="scatter-state-card" key={stateChart.state}>
+                      <header><strong>{stateChart.state}</strong><span>r {stateChart.correlation >= 0 ? "+" : ""}{stateChart.correlation.toFixed(2)} · {stateChart.points.length} counties</span></header>
+                      <svg viewBox={`0 0 ${MINI_PLOT.width} ${MINI_PLOT.height}`} role="img" aria-label={`${stateChart.state}: ${definition.label} versus ${partyLabel} vote share`}>
+                        {[0, .5, 1].map((tick) => <g className="scatter-mini-grid" key={tick}><line x1={MINI_PLOT.left} x2={MINI_PLOT.width - MINI_PLOT.right} y1={yScale(tick)} y2={yScale(tick)} /><text x={MINI_PLOT.left - 7} y={yScale(tick) + 3} textAnchor="end">{tick * 100}%</text></g>)}
+                        <line className="scatter-mini-majority" x1={MINI_PLOT.left} x2={MINI_PLOT.width - MINI_PLOT.right} y1={yScale(.5)} y2={yScale(.5)} />
+                        <g className="scatter-points" aria-hidden="true">
+                          {stateChart.points.map((point, index) => (
+                            <circle key={`${point.county}-${index}`} className={point.winner === "gop" ? "is-gop-point" : "is-dem-point"} cx={xScale(point.x)} cy={yScale(point.y)} r={3.2} onMouseEnter={(event) => setTooltip({ clientX: event.clientX, clientY: event.clientY, point })} onMouseMove={(event) => setTooltip({ clientX: event.clientX, clientY: event.clientY, point })} onMouseLeave={() => setTooltip(null)} />
+                          ))}
+                        </g>
+                        <line className="scatter-mini-trend" x1={xScale(chart.xMin)} x2={xScale(chart.xMax)} y1={yScale(stateChart.lineStart)} y2={yScale(stateChart.lineEnd)} />
+                        <text className="scatter-mini-x" x={MINI_PLOT.left} y={MINI_PLOT.height - 7}>{formatX(chart.xMin, definition, true)}</text>
+                        <text className="scatter-mini-x" x={MINI_PLOT.width - MINI_PLOT.right} y={MINI_PLOT.height - 7} textAnchor="end">{formatX(chart.xMax, definition, true)}</text>
+                      </svg>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+            {!chart && rows.length > 0 && selectedStates?.length === 0 && <div className="scatter-empty"><strong>No states selected.</strong><span>Open “States” and choose one or more states, or restore all 50.</span></div>}
           </div>
 
           <aside className="scatter-inspector" aria-live="polite">
@@ -309,7 +379,7 @@ export default function NotebookScatterplots() {
             <p>{definition.description}</p>
             <dl>
               <div><dt>Pearson r</dt><dd className={(chart?.correlation ?? 0) >= 0 ? "is-positive" : "is-negative"}>{chart ? `${chart.correlation >= 0 ? "+" : ""}${chart.correlation.toFixed(2)}` : "—"}</dd></div>
-              <div><dt>Counties shown</dt><dd>{chart?.points.length.toLocaleString("en-US") ?? "—"}</dd></div>
+              <div><dt>{view === "states" ? "State plots" : "Counties shown"}</dt><dd>{view === "states" ? stateCharts.length : chart?.points.length.toLocaleString("en-US") ?? "—"}</dd></div>
               <div><dt>Pattern</dt><dd>{chart ? associationCopy(chart.correlation) : "Loading"}</dd></div>
             </dl>
             <div className="scatter-legend"><span><i className="is-gop" /> Republican county winner</span><span><i className="is-dem" /> Democratic county winner</span><span><i className="is-trend" /> Linear trend</span></div>

@@ -502,8 +502,24 @@ button, input, select { font: inherit; }
 .scatter-segmented button:last-child { border-right: 0; }
 .scatter-segmented button[aria-pressed="true"] { color: var(--nd-black); background: var(--nd-text-display); }
 .scatter-controls select { min-height: 36px; max-width: 260px; padding: 0 35px 0 11px; color: var(--nd-text-primary); background: var(--nd-surface); border: 1px solid var(--nd-border-visible); border-radius: 4px; font: 700 9px/1 var(--font-mono); letter-spacing: .04em; text-transform: uppercase; }
+.scatter-state-picker-toggle { min-height: 36px; padding: 0 10px 0 13px; display: flex; gap: 12px; align-items: center; color: var(--nd-text-primary); background: transparent; border: 1px solid var(--nd-border-visible); border-radius: 4px; cursor: pointer; font: 700 9px/1 var(--font-mono); letter-spacing: .05em; text-transform: uppercase; }
+.scatter-state-picker-toggle span { min-width: 24px; height: 22px; padding: 0 5px; display: grid; place-items: center; color: var(--nd-black); background: #a9cbbd; border-radius: 2px; }
+.scatter-state-picker-toggle[aria-expanded="true"] { color: var(--nd-black); background: var(--nd-text-display); }
+.scatter-state-picker { padding: 18px; color: var(--nd-text-primary); background: var(--nd-surface-raised); border-bottom: 1px solid var(--nd-border-visible); animation: scatter-picker-in .22s ease-out both; }
+.scatter-state-picker-heading { display: flex; justify-content: space-between; gap: 30px; align-items: end; }
+.scatter-state-picker-heading > div:first-child { display: grid; gap: 5px; }
+.scatter-state-picker-heading > div:first-child span { font: 700 8px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--nd-text-disabled); }
+.scatter-state-picker-heading > div:first-child strong { font-size: 15px; color: var(--nd-text-display); }
+.scatter-state-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.scatter-state-actions button { min-height: 29px; padding: 0 10px; color: var(--nd-text-secondary); background: transparent; border: 1px solid var(--nd-border-visible); cursor: pointer; font: 700 8px/1 var(--font-mono); letter-spacing: .04em; text-transform: uppercase; }
+.scatter-state-actions button:hover, .scatter-state-actions button:focus-visible { color: var(--nd-black); background: #a9cbbd; outline: none; }
+.scatter-state-options { margin-top: 16px; display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); border-top: 1px solid var(--nd-border-visible); border-left: 1px solid var(--nd-border-visible); }
+.scatter-state-options button { min-width: 0; min-height: 39px; padding: 5px 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--nd-text-disabled); background: transparent; border: 0; border-right: 1px solid var(--nd-border-visible); border-bottom: 1px solid var(--nd-border-visible); cursor: pointer; font: 700 8px/1 var(--font-mono); text-align: left; }
+.scatter-state-options button[aria-pressed="true"] { color: var(--nd-text-display); background: rgba(169,203,189,.14); box-shadow: inset 3px 0 #a9cbbd; }
+.scatter-state-options button:hover, .scatter-state-options button:focus-visible { color: var(--nd-text-display); outline: 1px solid #a9cbbd; outline-offset: -2px; }
 .scatter-stage { min-height: 660px; display: grid; grid-template-columns: minmax(0, 1fr) 280px; }
 .scatter-plot-wrap { min-width: 0; min-height: 660px; padding: 22px 14px 6px; display: grid; place-items: center; position: relative; overflow: hidden; }
+.scatter-plot-wrap.is-grid { padding: 0; display: block; background: var(--paper-deep); }
 .scatter-plot { width: 100%; height: auto; overflow: visible; }
 .scatter-grid line { stroke: rgba(17,17,15,.14); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .scatter-grid text, .scatter-majority-label { fill: var(--muted); font: 700 10px/1 var(--font-mono); letter-spacing: .03em; text-transform: uppercase; }
@@ -516,6 +532,19 @@ button, input, select { font: inherit; }
 .scatter-trend-line { stroke: #617f73; stroke-width: 4; stroke-linecap: round; vector-effect: non-scaling-stroke; pointer-events: none; filter: drop-shadow(0 1px 0 rgba(255,255,255,.7)); }
 .scatter-axis-label { fill: var(--ink); font: 700 11px/1 var(--font-mono); letter-spacing: .07em; text-transform: uppercase; }
 .scatter-loading { position: absolute; inset: 0; display: grid; place-items: center; font: 700 10px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.scatter-empty { min-height: 660px; display: grid; place-content: center; gap: 8px; text-align: center; }
+.scatter-empty strong { font: 500 28px/1 var(--font-sans); letter-spacing: -.04em; }
+.scatter-empty span { font: 400 15px/1.4 var(--font-serif); color: var(--muted); }
+.scatter-state-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
+.scatter-state-card { min-width: 0; padding: 13px 10px 8px; background: var(--paper); border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.scatter-state-card header { min-height: 34px; padding: 0 4px; display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+.scatter-state-card header strong { font-size: 13px; }
+.scatter-state-card header span { font: 700 7px/1 var(--font-mono); letter-spacing: .03em; color: var(--muted); text-transform: uppercase; }
+.scatter-state-card svg { width: 100%; height: auto; overflow: visible; }
+.scatter-mini-grid line { stroke: rgba(17,17,15,.12); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.scatter-mini-grid text, .scatter-mini-x { fill: var(--muted); font: 700 7px/1 var(--font-mono); }
+.scatter-mini-majority { stroke: rgba(17,17,15,.48); stroke-width: 1; stroke-dasharray: 4 4; vector-effect: non-scaling-stroke; }
+.scatter-mini-trend { stroke: #617f73; stroke-width: 2.5; stroke-linecap: round; vector-effect: non-scaling-stroke; pointer-events: none; }
 .scatter-inspector { padding: 25px 20px; color: var(--nd-text-primary); background: var(--nd-surface); border-left: 1px solid var(--nd-border-visible); }
 .scatter-inspector h3 { margin: 25px 0 12px; font: 500 29px/1 var(--font-sans); letter-spacing: -.045em; color: var(--nd-text-display); }
 .scatter-inspector > p:not(.section-index):not(.scatter-caveat) { margin: 0; font: 400 15px/1.5 var(--font-serif); color: var(--nd-text-secondary); }
@@ -541,6 +570,7 @@ button, input, select { font: inherit; }
 .scatter-tooltip dl div { padding: 3px 0; display: flex; justify-content: space-between; gap: 14px; font: 700 9px/1.2 var(--font-mono); }
 .scatter-tooltip dt { color: var(--muted); }.scatter-tooltip dd { margin: 0; }
 .scatter-tooltip em { margin-top: 10px; display: block; font: normal 700 8px/1 var(--font-mono); letter-spacing: .05em; text-transform: uppercase; }
+@keyframes scatter-picker-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
 
 /* Results */
 .results-page { background: var(--paper); color: var(--ink); }
@@ -903,6 +933,9 @@ button, input, select { font: inherit; }
   .scatter-preset-rail, .scatter-notebook-notes { margin-left: 0; }
   .scatter-toolbar { align-items: flex-start; flex-direction: column; }
   .scatter-controls { width: 100%; overflow-x: auto; }
+  .scatter-state-picker-heading { align-items: flex-start; flex-direction: column; }
+  .scatter-state-actions { justify-content: flex-start; }
+  .scatter-state-options { grid-template-columns: repeat(5, minmax(0, 1fr)); }
   .scatter-stage { grid-template-columns: 1fr; }
   .scatter-plot-wrap { min-height: auto; }
   .scatter-inspector { border-top: 1px solid var(--nd-border-visible); border-left: 0; }
@@ -1073,7 +1106,12 @@ button, input, select { font: inherit; }
   .scatter-segmented { width: 100%; }
   .scatter-segmented button { flex: 1; padding-inline: 8px; }
   .scatter-controls select { width: 100%; max-width: none; }
+  .scatter-state-picker-toggle { width: 100%; justify-content: space-between; }
+  .scatter-state-picker { padding: 14px; }
+  .scatter-state-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .scatter-state-grid { grid-template-columns: 1fr; }
   .scatter-plot-wrap { padding-inline: 0; overflow-x: auto; justify-content: start; }
+  .scatter-plot-wrap.is-grid { overflow: visible; }
   .scatter-plot { min-width: 720px; }
   .scatter-inspector dl { grid-template-columns: 1fr; }
   .scatter-inspector dl div { min-height: 54px; flex-direction: row; align-items: center; border-right: 0; }
