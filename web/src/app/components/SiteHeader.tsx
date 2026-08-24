@@ -1,9 +1,11 @@
 import Link from "next/link";
 
 const navigation = [
-  { href: "/explore", label: "Explore" },
-  { href: "/prediction", label: "Prediction" },
-  { href: "/methodology", label: "Methodology" },
+  { href: "/explore", label: "Elections" },
+  { href: "/variables", label: "Variables" },
+  { href: "/simulations", label: "Simulations" },
+  { href: "/results", label: "Results" },
+  { href: "/methodology", label: "Method" },
   { href: "/data", label: "Data" },
 ];
 

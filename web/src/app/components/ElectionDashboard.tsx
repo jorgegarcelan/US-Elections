@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   ComposableMap,
   Geographies,
   Geography,
+  Marker,
   ZoomableGroup,
 } from "react-simple-maps";
 import Papa from "papaparse";
@@ -28,7 +29,10 @@ interface CountyData {
   pop_total: number;
   median_age: number;
   unemployment_rate: number;
+  latitude: number;
+  longitude: number;
   isPrediction?: boolean;
+  isStateView?: boolean;
 }
 
 interface SeatRow {
@@ -52,6 +56,8 @@ interface PredCounty {
   winner: string;
   delta_dem: number;
   delta_gop: number;
+  latitude: number;
+  longitude: number;
 }
 
 interface PredState {
@@ -62,6 +68,7 @@ interface PredState {
   winner: string;
   electoral_votes: number;
   status: string;
+  assumption?: boolean;
 }
 
 interface PredResult {
@@ -85,6 +92,7 @@ interface PredResult {
 type Year = "2016" | "2020" | "2024" | "predict";
 type MapMode = "winner" | "margin" | "shift";
 type PredModel = "xgboost" | "random_forest" | "ridge";
+type GeoLevel = "county" | "state";
 
 const MATCHUP: Record<string, string> = {
   "2016": "CLINTON VS. TRUMP",
@@ -354,14 +362,29 @@ function VoteBar({ gopPct, demPct }: { gopPct: number; demPct: number }) {
 const LEGENDS: Record<MapMode, { color: string; label: string }[]> = {
   winner:  [{ color: "#D71921", label: "Republican" }, { color: "#5B9BF6", label: "Democrat" }],
   margin:  [{ color: "#D71921", label: "R +40%" }, { color: "rgba(215,25,33,0.40)", label: "R +10%" }, { color: "rgba(215,25,33,0.20)", label: "R +1%" }, { color: "#2A2A2A", label: "Toss-up" }, { color: "rgba(91,155,246,0.20)", label: "D +1%" }, { color: "rgba(91,155,246,0.40)", label: "D +10%" }, { color: "#5B9BF6", label: "D +40%" }],
-  shift:   [{ color: "#D71921", label: "R swing +12 pp" }, { color: "rgba(215,25,33,0.40)", label: "R swing +3 pp" }, { color: "#2A2A2A", label: "No shift" }, { color: "rgba(91,155,246,0.40)", label: "D swing +3 pp" }, { color: "#5B9BF6", label: "D swing +12 pp" }],
+  shift:   [{ color: "#D71921", label: "→ R swing +12 pp" }, { color: "rgba(215,25,33,0.40)", label: "→ R swing +3 pp" }, { color: "#2A2A2A", label: "No shift" }, { color: "rgba(91,155,246,0.40)", label: "← D swing +3 pp" }, { color: "#5B9BF6", label: "← D swing +12 pp" }],
 };
 
 // ── Main ───────────────────────────────────────────────────────────────────────
 
-export default function ElectionDashboard({ initialYear = "2024" }: { initialYear?: Year }) {
+interface ElectionDashboardProps {
+  initialYear?: Year;
+  predictionOnly?: boolean;
+  defaultModel?: PredModel;
+  defaultNSim?: number;
+  autoRun?: boolean;
+}
+
+export default function ElectionDashboard({
+  initialYear = "2024",
+  predictionOnly = false,
+  defaultModel = "ridge",
+  defaultNSim = 200,
+  autoRun = false,
+}: ElectionDashboardProps) {
   const [year, setYear]           = useState<Year>(initialYear);
   const [mode, setMode]           = useState<MapMode>("winner");
+  const [geoLevel, setGeoLevel]   = useState<GeoLevel>("county");
   const [countyMap, setCountyMap] = useState<Record<string, CountyData>>({});
   const [geoData, setGeoData]     = useState<object | null>(null);
   const [seats, setSeats]         = useState<SeatRow[]>([]);
@@ -371,11 +394,12 @@ export default function ElectionDashboard({ initialYear = "2024" }: { initialYea
   const [hoveredState, setHoveredState] = useState<string | null>(null);
 
   // Prediction state
-  const [predModel, setPredModel]     = useState<PredModel>("ridge");
-  const [nSim, setNSim]               = useState(200);
+  const [predModel, setPredModel]     = useState<PredModel>(defaultModel);
+  const [nSim, setNSim]               = useState(defaultNSim);
   const [predLoading, setPredLoading] = useState(false);
   const [predResult, setPredResult]   = useState<PredResult | null>(null);
   const [predError, setPredError]     = useState<string | null>(null);
+  const didAutoRun = useRef(false);
 
   // Load GeoJSON once
   useEffect(() => {
@@ -408,6 +432,7 @@ export default function ElectionDashboard({ initialYear = "2024" }: { initialYea
           median_income: parseFloat(row.median_income) || 0, bachelors_rate: parseFloat(row.bachelors_rate) || 0,
           pop_total: parseFloat(row.pop_total) || 0, median_age: parseFloat(row.median_age) || 0,
           unemployment_rate: parseFloat(row.unemployment_rate) || 0,
+          latitude: parseFloat(row.latitude) || 0, longitude: parseFloat(row.longitude) || 0,
         };
       }
       setCountyMap(map);
@@ -426,6 +451,7 @@ export default function ElectionDashboard({ initialYear = "2024" }: { initialYea
         per_gop: c.per_gop, per_dem: c.per_dem, winner: c.winner,
         delta_per_gop: c.delta_gop,
         median_income: 0, bachelors_rate: 0, pop_total: 0, median_age: 0, unemployment_rate: 0,
+        latitude: c.latitude, longitude: c.longitude,
         isPrediction: true,
       };
     }
@@ -450,6 +476,12 @@ export default function ElectionDashboard({ initialYear = "2024" }: { initialYea
     }
   }, [predModel, nSim]);
 
+  useEffect(() => {
+    if (!autoRun || didAutoRun.current) return;
+    didAutoRun.current = true;
+    void runPrediction();
+  }, [autoRun, runPrediction]);
+
   // ── Derived ───────────────────────────────────────────────────────────────────
 
   const counties = useMemo(() => Object.values(activeCountyMap), [activeCountyMap]);
@@ -472,6 +504,72 @@ export default function ElectionDashboard({ initialYear = "2024" }: { initialYea
     return sv;
   }, [counties]);
 
+  const stateViewMap = useMemo(() => {
+    const grouped: Record<string, {
+      votesGop: number; votesDem: number; totalVotes: number; delta: number; deltaWeight: number;
+      perGop: number; perDem: number; count: number; population: number; latitude: number; longitude: number; coordWeight: number;
+    }> = {};
+    for (const county of counties) {
+      const group = grouped[county.state] ??= {
+        votesGop: 0, votesDem: 0, totalVotes: 0, delta: 0, deltaWeight: 0,
+        perGop: 0, perDem: 0, count: 0, population: 0, latitude: 0, longitude: 0, coordWeight: 0,
+      };
+      const deltaWeight = county.total_votes || county.pop_total || 1;
+      const coordWeight = county.pop_total || 1;
+      group.votesGop += county.votes_gop;
+      group.votesDem += county.votes_dem;
+      group.totalVotes += county.total_votes;
+      group.delta += county.delta_per_gop * deltaWeight;
+      group.deltaWeight += deltaWeight;
+      group.perGop += county.per_gop;
+      group.perDem += county.per_dem;
+      group.count += 1;
+      group.population += county.pop_total;
+      group.latitude += county.latitude * coordWeight;
+      group.longitude += county.longitude * coordWeight;
+      group.coordWeight += coordWeight;
+    }
+
+    const result: Record<string, CountyData> = {};
+    for (const [stateName, group] of Object.entries(grouped)) {
+      const predicted = predResult?.states.find((state) => state.state === stateName);
+      const voteTotal = group.votesGop + group.votesDem;
+      const perGop = predicted?.per_gop ?? (voteTotal > 0 ? group.votesGop / voteTotal : group.perGop / group.count);
+      const perDem = predicted?.per_dem ?? (voteTotal > 0 ? group.votesDem / voteTotal : group.perDem / group.count);
+      result[stateName] = {
+        county_fips: `state-${stateName}`,
+        county: stateName,
+        state: stateName,
+        votes_gop: group.votesGop,
+        votes_dem: group.votesDem,
+        total_votes: group.totalVotes,
+        per_gop: perGop,
+        per_dem: perDem,
+        winner: predicted?.winner ?? (perGop > perDem ? "gop" : "dem"),
+        delta_per_gop: group.delta / Math.max(group.deltaWeight, 1),
+        median_income: 0,
+        bachelors_rate: 0,
+        pop_total: group.population,
+        median_age: 0,
+        unemployment_rate: 0,
+        latitude: group.latitude / Math.max(group.coordWeight, 1),
+        longitude: group.longitude / Math.max(group.coordWeight, 1),
+        isPrediction: year === "predict",
+        isStateView: true,
+      };
+    }
+    return result;
+  }, [counties, predResult, year]);
+
+  const shiftMarkers = useMemo(() => {
+    const source = geoLevel === "state" ? Object.values(stateViewMap) : counties;
+    const threshold = geoLevel === "state" ? 0.5 : 4;
+    return source
+      .filter((item) => item.latitude && item.longitude && Math.abs(item.delta_per_gop) >= threshold)
+      .sort((a, b) => Math.abs(b.delta_per_gop) - Math.abs(a.delta_per_gop))
+      .slice(0, geoLevel === "state" ? 51 : 90);
+  }, [counties, geoLevel, stateViewMap]);
+
   const stateBlocks = useMemo((): StateBlock[] => {
     if (year === "predict" && predResult) {
       return seats.map((seat) => {
@@ -486,7 +584,7 @@ export default function ElectionDashboard({ initialYear = "2024" }: { initialYea
     }
     return seats.map((s) => {
       const sv = stateVotes[s.state];
-      const winner: "gop" | "dem" | "unknown" = sv ? (sv.gop > sv.dem ? "gop" : "dem") : "unknown";
+      const winner: "gop" | "dem" | "unknown" = s.state === "Alaska" ? "gop" : sv ? (sv.gop > sv.dem ? "gop" : "dem") : "unknown";
       return { state: s.state, state_code: s.state_code, ev: s.ElectoralVotes2024, winner };
     });
   }, [seats, stateVotes, year, predResult]);
@@ -542,10 +640,11 @@ export default function ElectionDashboard({ initialYear = "2024" }: { initialYea
   const handleEnter = useCallback(
     (geo: { properties: { STATE: string; COUNTY: string } }, evt: React.MouseEvent) => {
       const fips = geo.properties.STATE + geo.properties.COUNTY;
-      const d = activeCountyMap[fips];
+      const county = activeCountyMap[fips];
+      const d = geoLevel === "state" && county ? stateViewMap[county.state] : county;
       if (d) { setTooltip({ x: evt.clientX, y: evt.clientY, d }); setHoveredState(d.state); }
     },
-    [activeCountyMap]
+    [activeCountyMap, geoLevel, stateViewMap]
   );
   const handleMove  = useCallback((evt: React.MouseEvent) => { setTooltip((p) => p && { ...p, x: evt.clientX, y: evt.clientY }); }, []);
   const handleLeave = useCallback(() => { setTooltip(null); setHoveredState(null); }, []);
@@ -632,17 +731,29 @@ export default function ElectionDashboard({ initialYear = "2024" }: { initialYea
             </div>
           )}
 
-          {/* Year selector */}
-          <SegmentedControl<Year>
+          {/* Geography level */}
+          <SegmentedControl<GeoLevel>
             options={[
-              { value: "2016",    label: "2016" },
-              { value: "2020",    label: "2020" },
-              { value: "2024",    label: "2024" },
-              { value: "predict", label: "Predict" },
+              { value: "county", label: "County" },
+              { value: "state", label: "State" },
             ]}
-            value={year}
-            onChange={setYear}
+            value={geoLevel}
+            onChange={setGeoLevel}
           />
+
+          {/* Year selector */}
+          {!predictionOnly && (
+            <SegmentedControl<Year>
+              options={[
+                { value: "2016",    label: "2016" },
+                { value: "2020",    label: "2020" },
+                { value: "2024",    label: "2024" },
+                { value: "predict", label: "Predict" },
+              ]}
+              value={year}
+              onChange={setYear}
+            />
+          )}
 
           {/* Map mode */}
           <SegmentedControl<MapMode>
@@ -704,7 +815,8 @@ export default function ElectionDashboard({ initialYear = "2024" }: { initialYea
                   {({ geographies }: { geographies: Array<{ rsmKey: string; properties: { STATE: string; COUNTY: string } }> }) =>
                     geographies.map((geo) => {
                       const fips = geo.properties.STATE + geo.properties.COUNTY;
-                      const d = activeCountyMap[fips];
+                      const county = activeCountyMap[fips];
+                      const d = geoLevel === "state" && county ? stateViewMap[county.state] : county;
                       const dimmed = searchFips !== null && !searchFips.has(fips);
                       const fill = d ? countyFill(d, mode) : "var(--nd-border-visible)";
 
@@ -713,8 +825,8 @@ export default function ElectionDashboard({ initialYear = "2024" }: { initialYea
                           key={geo.rsmKey}
                           geography={geo}
                           fill={fill}
-                          stroke="#000000"
-                          strokeWidth={0.5}
+                          stroke={geoLevel === "state" ? "rgba(0,0,0,0.16)" : "#000000"}
+                          strokeWidth={geoLevel === "state" ? 0.2 : 0.5}
                           opacity={dimmed ? 0.15 : 1}
                           style={{ default: { outline: "none" }, hover: { outline: "none", opacity: 0.85 }, pressed: { outline: "none" } }}
                           onMouseEnter={(evt) => handleEnter(geo, evt as unknown as React.MouseEvent)}
@@ -724,6 +836,25 @@ export default function ElectionDashboard({ initialYear = "2024" }: { initialYea
                     })
                   }
                 </Geographies>
+                {mode === "shift" && shiftMarkers.map((item) => (
+                  <Marker key={item.county_fips} coordinates={[item.longitude, item.latitude]}>
+                    <text
+                      aria-hidden="true"
+                      textAnchor="middle"
+                      dominantBaseline="central"
+                      fill="#ffffff"
+                      stroke={item.delta_per_gop > 0 ? "#8f0f18" : "#214e9d"}
+                      strokeWidth={geoLevel === "state" ? 1.5 : 1}
+                      paintOrder="stroke"
+                      fontFamily="var(--font-mono)"
+                      fontSize={geoLevel === "state" ? 12 : 7}
+                      fontWeight={700}
+                      style={{ pointerEvents: "none" }}
+                    >
+                      {item.delta_per_gop > 0 ? "→" : "←"}
+                    </text>
+                  </Marker>
+                ))}
               </ZoomableGroup>
             </ComposableMap>
           )}
@@ -848,7 +979,7 @@ export default function ElectionDashboard({ initialYear = "2024" }: { initialYea
                       </div>
                     </div>
                     <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, fontWeight: 700, color: toGOP ? "#D71921" : "#5B9BF6", letterSpacing: "0.02em", flexShrink: 0 }}>
-                      {toGOP ? "▲R" : "▼D"} {points(c.delta_per_gop)}
+                      {toGOP ? "→ R" : "← D"} {points(c.delta_per_gop)}
                     </span>
                   </div>
                 );
@@ -900,7 +1031,7 @@ export default function ElectionDashboard({ initialYear = "2024" }: { initialYea
             )}
           </div>
           <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--nd-text-disabled)", marginBottom: 12 }}>
-            {tooltip.d.state}
+            {tooltip.d.isStateView ? "State result" : tooltip.d.state}
           </div>
 
           {[{ label: "R", p: tooltip.d.per_gop, color: "#D71921" }, { label: "D", p: tooltip.d.per_dem, color: "#5B9BF6" }].map(({ label, p, color }) => (
@@ -915,7 +1046,7 @@ export default function ElectionDashboard({ initialYear = "2024" }: { initialYea
             </div>
           ))}
 
-          {!tooltip.d.isPrediction && (
+          {!tooltip.d.isPrediction && !tooltip.d.isStateView && (
             <div style={{ borderTop: "1px solid var(--nd-border)", marginTop: 10, paddingTop: 10, display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 12px" }}>
               {[
                 { label: "Votes",      value: fmt(tooltip.d.total_votes) },
@@ -935,7 +1066,7 @@ export default function ElectionDashboard({ initialYear = "2024" }: { initialYea
 
           {(mode === "shift" || tooltip.d.isPrediction) && (
             <div style={{ marginTop: 8, fontFamily: "var(--font-mono)", fontSize: 11, fontWeight: 700, color: tooltip.d.delta_per_gop > 0 ? "#D71921" : "#5B9BF6", letterSpacing: "0.04em" }}>
-              {tooltip.d.delta_per_gop > 0 ? "▲ R +" : "▼ D +"}
+              {tooltip.d.delta_per_gop > 0 ? "→ R +" : "← D +"}
               {points(tooltip.d.delta_per_gop)} vs. {PREV_YEAR[year]}
             </div>
           )}

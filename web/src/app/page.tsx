@@ -7,7 +7,7 @@ import SiteHeader from "./components/SiteHeader";
 const electionYears = [
   { year: "2016", dem: 232, gop: 306, note: "The geography of disruption" },
   { year: "2020", dem: 306, gop: 232, note: "A narrow map, reversed" },
-  { year: "2024", dem: 226, gop: 309, note: "A nationwide Republican shift" },
+  { year: "2024", dem: 226, gop: 312, note: "A nationwide Republican shift" },
 ];
 
 export default function Home() {
@@ -21,14 +21,14 @@ export default function Home() {
           <p className="hero-intro">Three presidential elections, thousands of local stories and one question: how do people, place and history shape the vote?</p>
         </div>
         <div className="hero-board" aria-label="2024 electoral result">
-          <div className="hero-result hero-result-gop"><span className="hero-party">Republican</span><AnimatedNumber value={309} className="hero-total" /><span>electoral votes</span></div>
+          <div className="hero-result hero-result-gop"><span className="hero-party">Republican</span><AnimatedNumber value={312} className="hero-total" /><span>electoral votes</span></div>
           <div className="hero-threshold"><span>270</span><span>to win</span></div>
           <div className="hero-result hero-result-dem"><span className="hero-party">Democrat</span><AnimatedNumber value={226} className="hero-total" /><span>electoral votes</span></div>
           <div className="electoral-stripe" aria-hidden="true">
             {Array.from({ length: 36 }, (_, index) => (
               <span
                 key={index}
-                className={`electoral-box ${index < 20 ? "is-gop" : "is-dem"}`}
+                className={`electoral-box ${index < 21 ? "is-gop" : "is-dem"}`}
                 style={{ "--box-index": index } as CSSProperties}
               />
             ))}
@@ -60,7 +60,7 @@ export default function Home() {
       </section>
 
       <section className="model-teaser">
-        <div className="model-copy"><p className="section-index">04 / The model</p><h2>From historical patterns to possible outcomes.</h2><p>We combine electoral history with demographic and socioeconomic data, compare several algorithms and run Monte Carlo simulations to quantify uncertainty—not to pretend it does not exist.</p><Link className="button button-light" href="/prediction">Open prediction lab →</Link></div>
+        <div className="model-copy"><p className="section-index">04 / The model</p><h2>From historical patterns to possible outcomes.</h2><p>We combine electoral history with demographic and socioeconomic data, compare several algorithms and run Monte Carlo simulations to quantify uncertainty—not to pretend it does not exist.</p><Link className="button button-light" href="/simulations">See 1,000 simulations →</Link></div>
         <div className="model-console" aria-label="Model pipeline overview">
           <div><span>Input</span><strong>Census ACS + election results</strong></div><div><span>Models</span><strong>Ridge · Random Forest · XGBoost</strong></div><div><span>Scale</span><strong>County → State → Electoral College</strong></div><div><span>Output</span><strong>Vote share + win probability</strong></div>
         </div>

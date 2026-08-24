@@ -4,7 +4,7 @@ An interactive data story about the 2016, 2020 and 2024 U.S. presidential electi
 
 ## What is included
 
-- A multi-page Next.js website with an editorial home, interactive atlas, prediction lab, methodology and data downloads.
+- A multi-page Next.js website with an editorial home, election atlas, demographic variable explorer, state/county results, simulation map, model explainability, methodology and data downloads.
 - Harmonised county datasets for the 2016, 2020 and 2024 cycles.
 - Census ACS variables covering population, education, race, income, employment and other local characteristics.
 - Ridge, Random Forest and XGBoost delta models.
@@ -34,7 +34,7 @@ pip install -r requirements.txt
 uvicorn api.main:app --reload --port 8000
 ```
 
-The API exposes `GET /health` and `GET /predict?n_sim=200&model=ridge`.
+The API exposes `GET /health`, `GET /predict?n_sim=200&model=ridge` and `GET /explain?model=xgboost`.
 
 ### 2. Website
 
@@ -51,7 +51,8 @@ Open [http://localhost:3000](http://localhost:3000). The website calls its own `
 
 - County deltas are stored and displayed in percentage points.
 - Popular-vote figures in the atlas show the two-party vote share.
-- Alaska is not included in county modelling because its election reporting geography is not directly comparable; its three electoral votes remain unallocated in model outputs.
+- Alaska is not included in county modelling because its election reporting geography is not directly comparable. Following the explicit prior in `simulation.ipynb`, its three electoral votes are assigned to the Republican total and labelled as an assumption.
+- Global feature importance describes how the fitted model uses its inputs; it is not a causal interpretation of voting behaviour.
 - The model is exploratory. It does not ingest live polling, candidates, campaign events or causal effects.
 - ACS values are survey estimates and neighbouring counties are not statistically independent.
 

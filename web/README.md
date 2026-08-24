@@ -5,11 +5,15 @@ The public-facing Next.js application for the U.S. Elections project.
 ## Routes
 
 - `/` — editorial overview and project narrative
-- `/explore` — historical county atlas for 2016, 2020 and 2024
+- `/explore` — historical election atlas with state/county views and directional shift markers
+- `/variables` — demographic and socioeconomic maps at state and county level
+- `/simulations` — final predicted map, executed notebook benchmark and model explainability
+- `/results` — searchable state and county election result tables
 - `/prediction` — model selection and Monte Carlo simulation
 - `/methodology` — data and modelling pipeline
 - `/data` — sources, variable groups and downloadable datasets
 - `/api/predict` — same-origin proxy to the FastAPI service
+- `/api/explain` — same-origin proxy for model-native global feature importance
 
 ## Configuration
 

@@ -44,7 +44,7 @@ export default function DataPage() {
       <section className="dictionary-section">
         <div className="section-heading"><p className="section-index">Variable groups</p><h2>People, place<br /><em>and the vote.</em></h2></div>
         <div className="variable-grid">{variables.map((variable, index) => <div key={variable}><span>{String(index + 1).padStart(2, "0")}</span><p>{variable}</p></div>)}</div>
-        <aside className="data-note"><strong>Important:</strong> ACS figures are estimates, electoral deltas are stored in percentage points, and Alaska is excluded from county-level modelling because its election reporting geography is not directly comparable.</aside>
+        <aside className="data-note"><strong>Important:</strong> ACS figures are estimates, electoral deltas are stored in percentage points, and Alaska is excluded from county-level modelling because its reporting geography is not directly comparable. Its three electoral votes follow the notebook&apos;s explicit Republican prior.</aside>
       </section>
       <SiteFooter />
     </main>

@@ -33,6 +33,8 @@ def prepare_data():
     county_fips    = data_2024["county_fips"].astype(str).str.zfill(5).values
     county_names   = data_2024["county"].values
     state_names    = data_2024["state"].values
+    latitudes      = data_2024["latitude"].values.astype(float)
+    longitudes     = data_2024["longitude"].values.astype(float)
 
     # Build X_sim: mirrors exactly the notebook preprocessing
     DROP_VOTE  = ["votes_dem", "total_votes", "votes_others", "per_votes_others", "winner", "votes_gop"]
@@ -51,6 +53,8 @@ def prepare_data():
         "county_fips":   county_fips,
         "county_names":  county_names,
         "state_names":   state_names,
+        "latitudes":     latitudes,
+        "longitudes":    longitudes,
         "seats":         seats,
     }
 
@@ -116,7 +120,10 @@ def run_simulation(
     state_names  = d["state_names"]
     county_names = d["county_names"]
     county_fips  = d["county_fips"]
+    latitudes    = d["latitudes"]
+    longitudes   = d["longitudes"]
     seats        = d["seats"]
+    alaska_ev    = int(seats.loc[seats["state"] == "Alaska", "ElectoralVotes2024"].sum())
 
     n_counties = len(X_sim)
 
@@ -190,8 +197,9 @@ def run_simulation(
         merged = seats.merge(agg[["state", "winner"]], on="state", how="inner")
         ev = merged.groupby("winner")["ElectoralVotes2024"].sum().to_dict()
         ev_d = int(ev.get("dem", 0))
-        ev_g = int(ev.get("gop", 0))
-        # Alaska (+3) hardcoded in notebook — already in seats.csv so skip duplicate
+        # Alaska has no county rows in the project dataset. The executed notebook
+        # assigns its three electoral votes to the GOP as an explicit prior.
+        ev_g = int(ev.get("gop", 0)) + alaska_ev
 
         w = "dem" if ev_d > ev_g else ("gop" if ev_g > ev_d else "tie")
         sim_results.append((ev_d, ev_g, w))
@@ -220,6 +228,8 @@ def run_simulation(
             "winner":   winner,
             "delta_dem": round(float(avg_delta_d[i]), 3),
             "delta_gop": round(float(avg_delta_g[i]), 3),
+            "latitude":  round(float(latitudes[i]), 6),
+            "longitude": round(float(longitudes[i]), 6),
         })
 
     # State-level results — use accumulated vote totals (not per-county pct means)
@@ -263,11 +273,21 @@ def run_simulation(
         }
         for _, row in merged_s.iterrows()
     ]
+    state_results.append({
+        "state":           "Alaska",
+        "state_code":      "AK",
+        "per_dem":         0.0,
+        "per_gop":         1.0,
+        "winner":          "gop",
+        "electoral_votes": alaska_ev,
+        "status":          "Assumed Republican",
+        "assumption":      True,
+    })
 
     # Electoral college totals from averaged state calls
     ev_by_winner = merged_s.groupby("winner")["ElectoralVotes2024"].sum().to_dict()
     total_ev_d = int(ev_by_winner.get("dem", 0))
-    total_ev_g = int(ev_by_winner.get("gop", 0))
+    total_ev_g = int(ev_by_winner.get("gop", 0)) + alaska_ev
     ec_winner  = "dem" if total_ev_d > total_ev_g else "gop"
 
     # Simulation distribution
@@ -283,7 +303,7 @@ def run_simulation(
         "electoral":  {
             "dem":    total_ev_d,
             "gop":    total_ev_g,
-            "unallocated": int(seats[~seats["state"].isin(merged_s["state"])]["ElectoralVotes2024"].sum()),
+            "unallocated": int(seats[~seats["state"].isin(list(merged_s["state"]) + ["Alaska"])]["ElectoralVotes2024"].sum()),
             "winner": ec_winner,
         },
         "simulation": {
@@ -308,6 +328,49 @@ def health():
     return {
         "status": "ok",
         "models": list(state.get("models", {}).keys()),
+    }
+
+
+@app.get("/explain")
+def explain(
+    model: Literal["xgboost", "random_forest", "ridge"] = Query(default="xgboost"),
+):
+    """Return global model-native importance averaged across years and parties."""
+    models = state.get("models", {})
+    if not models:
+        raise HTTPException(503, "Server not ready")
+
+    accumulated: dict[str, list[float]] = {}
+    for year in ("2016", "2020"):
+        for target in ("dem", "gop"):
+            estimator = models.get(f"{model}_delta_{target}_{year}")
+            if estimator is None:
+                continue
+            names = list(getattr(estimator, "feature_names_in_", []))
+            if hasattr(estimator, "feature_importances_"):
+                values = np.asarray(estimator.feature_importances_, dtype=float)
+            elif hasattr(estimator, "coef_"):
+                values = np.abs(np.asarray(estimator.coef_, dtype=float)).reshape(-1)
+                frame = state["data"]["X_sim"].reindex(columns=names, fill_value=0)
+                values = values * frame.std(axis=0).to_numpy(dtype=float)
+            else:
+                continue
+            for name, value in zip(names, values):
+                if str(name).startswith("state_"):
+                    continue
+                accumulated.setdefault(str(name), []).append(float(value))
+
+    averaged = {name: float(np.mean(values)) for name, values in accumulated.items()}
+    total = sum(averaged.values()) or 1.0
+    features = [
+        {"feature": name, "importance": round(value / total, 6)}
+        for name, value in sorted(averaged.items(), key=lambda item: item[1], reverse=True)[:15]
+    ]
+    return {
+        "model": model,
+        "method": "mean standardized absolute coefficient" if model == "ridge" else "mean tree importance",
+        "features": features,
+        "note": "Global association within the fitted model; it is not a causal effect.",
     }
 
 
