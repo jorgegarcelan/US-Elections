@@ -306,7 +306,11 @@ function ECBar({
           >
             <span className="ec-tooltip-code">{activeBlock.state_code}</span>
             <strong>{activeBlock.state}</strong>
-            <span>{activeBlock.ev} electoral votes · {winnerLabel(activeBlock.winner)}</span>
+            <span className="ec-tooltip-detail">
+              <span>{activeBlock.ev} electoral votes</span>
+              <span aria-hidden="true">·</span>
+              <span className="ec-tooltip-party">{winnerLabel(activeBlock.winner)}</span>
+            </span>
           </div>
         )}
         <div style={{ position: "absolute", left: `${(270 / total) * 100}%`, top: -4, bottom: -4, width: 1, backgroundColor: "var(--nd-text-disabled)", pointerEvents: "none" }} />
