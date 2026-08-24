@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import SiteHeader from "../components/SiteHeader";
+import NotebookScatterplots from "../components/NotebookScatterplots";
 import VariableExplorer from "../components/VariableExplorer";
 
 export const metadata: Metadata = {
@@ -16,6 +17,7 @@ export default function VariablesPage() {
         <p>Move between county and state views, then switch between the census variable, the 2024 winner map or a combined layer with party-colored borders.</p>
       </section>
       <VariableExplorer />
+      <NotebookScatterplots />
     </main>
   );
 }

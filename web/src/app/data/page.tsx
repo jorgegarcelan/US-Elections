@@ -1,23 +1,23 @@
 import type { Metadata } from "next";
+import DataSourcesDiagram from "../components/DataSourcesDiagram";
 import SiteFooter from "../components/SiteFooter";
 import SiteHeader from "../components/SiteHeader";
+import VariableDictionary from "../components/VariableDictionary";
 
 export const metadata: Metadata = {
   title: "Data",
   description: "Sources, coverage, variables and downloadable county-level election datasets.",
 };
 
-const downloads = [
-  ["2016", "Election + ACS 2015", "/data/final_data_2016.csv"],
-  ["2020", "Election + ACS 2019", "/data/final_data_2020.csv"],
-  ["2024", "Election + ACS 2023", "/data/final_data_2024.csv"],
+const cycles = [
+  { election: "2016", census: "ACS 2015", file: "final_data_2016.csv", href: "/data/final_data_2016.csv" },
+  { election: "2020", census: "ACS 2019", file: "final_data_2020.csv", href: "/data/final_data_2020.csv" },
+  { election: "2024", census: "ACS 2023", file: "final_data_2024.csv", href: "/data/final_data_2024.csv" },
 ];
-
-const variables = ["Vote totals & shares", "Population", "Median age", "Median income", "Education", "Race & ethnicity", "Unemployment", "Health insurance", "Family size", "Latitude & longitude"];
 
 export default function DataPage() {
   return (
-    <main className="editorial-page project-page">
+    <main className="editorial-page project-page data-page">
       <SiteHeader />
       <header className="page-hero data-hero">
         <p className="section-index">Sources &amp; data / Open and inspectable</p>
@@ -25,27 +25,27 @@ export default function DataPage() {
         <p>Three harmonised county-level datasets connect presidential election returns with demographic and socioeconomic estimates.</p>
       </header>
 
-      <section className="source-section">
-        <p className="section-index">Primary sources</p>
-        <div className="source-grid">
-          <article><span>01</span><h2>Election returns</h2><p>County-level presidential results from the public US County Level Election Results collection, supplemented with 2024 returns.</p><a href="https://github.com/tonmcg/US_County_Level_Election_Results_08-20" target="_blank" rel="noreferrer">View source ↗</a></article>
-          <article><span>02</span><h2>American Community Survey</h2><p>Five-year ACS estimates retrieved through the official U.S. Census API for the 2015, 2019 and 2023 data releases.</p><a href="https://www.census.gov/data/developers/data-sets/acs-5year.html" target="_blank" rel="noreferrer">Documentation ↗</a></article>
-          <article><span>03</span><h2>Geography</h2><p>County FIPS identifiers and Census cartographic boundaries connect tabular results to the interactive map.</p><a href="https://www.census.gov/geographies/mapping-files/time-series/geo/cartographic-boundary.html" target="_blank" rel="noreferrer">Boundary files ↗</a></article>
+      <DataSourcesDiagram />
+
+      <section className="data-cycle-section dark-section">
+        <header className="data-section-heading">
+          <p className="section-index">02 / Cycle alignment</p>
+          <h2>Election year<br /><em>meets Census year.</em></h2>
+          <p>Each election is paired with the latest available five-year ACS release, then transformed into the same 52-column county schema.</p>
+        </header>
+        <div className="data-cycle-grid">
+          {cycles.map((cycle, index) => <article key={cycle.election}>
+            <span>0{index + 1} / 03</span>
+            <div className="data-cycle-inputs"><div><small>Election</small><strong>{cycle.election}</strong></div><i aria-hidden="true">+</i><div><small>Census</small><strong>{cycle.census}</strong></div></div>
+            <div className="data-cycle-merge" aria-hidden="true"><i /></div>
+            <a href={cycle.href} download><div><small>Prepared output</small><strong>{cycle.file}</strong></div><span>CSV ↓</span></a>
+          </article>)}
         </div>
+        <div className="data-schema-rail"><span>Same schema</span><i><b /></i><strong>3 cycles × 3,107 counties × 52 columns</strong></div>
       </section>
 
-      <section className="download-section dark-section">
-        <div><p className="section-index">Downloads</p><h2>Use the prepared datasets.</h2><p>CSV files are provided for inspection and reproducibility. Each combines election outcomes, Census characteristics, geographic identifiers and cycle-over-cycle deltas.</p></div>
-        <div className="download-list">
-          {downloads.map(([year, label, href]) => <a key={year} href={href} download><strong>{year}</strong><span>{label}</span><span>CSV ↓</span></a>)}
-        </div>
-      </section>
-
-      <section className="dictionary-section">
-        <div className="section-heading"><p className="section-index">Variable groups</p><h2>People, place<br /><em>and the vote.</em></h2></div>
-        <div className="variable-grid">{variables.map((variable, index) => <div key={variable}><span>{String(index + 1).padStart(2, "0")}</span><p>{variable}</p></div>)}</div>
-        <aside className="data-note"><strong>Important:</strong> ACS figures are estimates, electoral deltas are stored in percentage points, and Alaska is excluded from county-level modelling because its reporting geography is not directly comparable. Its three electoral votes follow the notebook&apos;s explicit Republican prior.</aside>
-      </section>
+      <VariableDictionary />
+      <aside className="data-note data-page-note"><strong>Important:</strong> ACS figures are estimates, electoral deltas are stored in percentage points, and Alaska is excluded from county-level modelling because its reporting geography is not directly comparable. Its three electoral votes follow the notebook&apos;s explicit Republican prior.</aside>
       <SiteFooter />
     </main>
   );
