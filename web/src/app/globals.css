@@ -100,6 +100,7 @@ button, input, select { font: inherit; }
 .ec-state-tooltip strong { font: 700 13px/1.2 var(--font-sans); }
 .ec-state-tooltip .ec-tooltip-detail { display: flex; flex-wrap: wrap; gap: 0 5px; font: 700 10px/1.35 var(--font-mono); letter-spacing: .02em; text-transform: uppercase; color: var(--ink-soft); }
 .ec-state-tooltip .ec-tooltip-party { color: var(--tooltip-color); font-weight: 700; }
+.ec-state-tooltip.is-gop .ec-tooltip-detail, .ec-state-tooltip.is-dem .ec-tooltip-detail, .ec-state-tooltip.is-gop .ec-tooltip-party, .ec-state-tooltip.is-dem .ec-tooltip-party { color: #fff; }
 .is-gop { background: var(--gop); }
 .is-dem { background: var(--dem); }
 .hero-actions { display: flex; justify-content: flex-end; gap: 12px; padding-top: 24px; }
