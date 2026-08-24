@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Image from "next/image";
 import Link from "next/link";
 import SiteFooter from "../components/SiteFooter";
 import SiteHeader from "../components/SiteHeader";
@@ -76,9 +77,10 @@ export default function ProjectPage() {
             </a>
           </div>
         </div>
-        <div className="project-talk-signal" aria-hidden="true">
-          <span>DATA</span><i /><span>MODEL</span><i /><span>VOTE</span>
-        </div>
+        <a className="project-talk-cover" href="https://www.youtube.com/watch?v=XGsaWqbOf9w" target="_blank" rel="noreferrer" aria-label="Watch the full T3chFest talk on YouTube">
+          <Image src="/images/charla_t3chfest.jpeg" width={1280} height={719} sizes="(max-width: 900px) 100vw, 48vw" alt="Lucía Cordero and Jorge Garcelán presenting the project at T3chFest 10" />
+          <span>Watch talk <b aria-hidden="true">▶</b></span>
+        </a>
       </section>
 
       <section className="project-people" aria-labelledby="people-title">
@@ -89,7 +91,7 @@ export default function ProjectPage() {
         </div>
         <div className="project-people-grid">
           {people.map((person, index) => (
-            <article className={index === 0 ? "person-card person-card-dem" : "person-card person-card-gop"} key={person.name}>
+            <article className="person-card" key={person.name}>
               <div className="person-card-topline"><span>{person.initials}</span><small>0{index + 1} / 02</small></div>
               <div className="person-card-copy">
                 <p>{person.role}</p>
