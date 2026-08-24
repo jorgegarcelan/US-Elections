@@ -202,6 +202,7 @@ function ECBar({
   blocks: StateBlock[];
   predResult: PredResult | null;
 }) {
+  const [activeStateCode, setActiveStateCode] = useState<string | null>(null);
   const gopEV = blocks.filter((b) => b.winner === "gop").reduce((s, b) => s + b.ev, 0);
   const demEV = blocks.filter((b) => b.winner === "dem").reduce((s, b) => s + b.ev, 0);
   const total = blocks.reduce((s, b) => s + b.ev, 0) || 538;
@@ -211,6 +212,15 @@ function ECBar({
     ...blocks.filter((b) => b.winner === "gop").sort((a, b) => b.ev - a.ev),
     ...blocks.filter((b) => b.winner !== "gop").sort((a, b) => a.ev - b.ev),
   ];
+  let allocatedEV = 0;
+  const positionedBlocks = sorted.map((block) => {
+    const position = ((allocatedEV + block.ev / 2) / total) * 100;
+    allocatedEV += block.ev;
+    return { ...block, position };
+  });
+  const activeBlock = positionedBlocks.find((block) => block.state_code === activeStateCode);
+  const winnerLabel = (winner: StateBlock["winner"]) =>
+    winner === "gop" ? "Republican" : winner === "dem" ? "Democrat" : "Unallocated";
 
   return (
     <div className="ec-bar" style={{ backgroundColor: "var(--nd-surface)", borderBottom: "1px solid var(--nd-border)", padding: "20px 24px 16px", flexShrink: 0 }}>
@@ -262,16 +272,22 @@ function ECBar({
 
       {/* State blocks */}
       <div key={`${gopEV}-${demEV}-${unallocatedEV}`} style={{ display: "flex", height: 20, gap: 2, position: "relative" }}>
-        {sorted.map((b, index) => (
+        {positionedBlocks.map((b, index) => (
           <div
             key={b.state_code}
             className="ec-state-block"
-            title={`${b.state} · ${b.ev} EV`}
+            tabIndex={0}
+            aria-label={`${b.state}, ${b.ev} electoral votes, ${winnerLabel(b.winner)}`}
+            aria-describedby={activeStateCode === b.state_code ? "electoral-state-tooltip" : undefined}
+            onMouseEnter={() => setActiveStateCode(b.state_code)}
+            onMouseLeave={() => setActiveStateCode(null)}
+            onFocus={() => setActiveStateCode(b.state_code)}
+            onBlur={() => setActiveStateCode(null)}
             style={{
               "--box-index": index,
               flex: b.ev,
               backgroundColor: b.winner === "gop" ? "#D71921" : b.winner === "dem" ? "#5B9BF6" : "var(--nd-border-visible)",
-              display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", cursor: "default",
+              display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", cursor: "help",
             } as React.CSSProperties}
           >
             {b.ev >= 10 && (
@@ -281,6 +297,18 @@ function ECBar({
             )}
           </div>
         ))}
+        {activeBlock && (
+          <div
+            id="electoral-state-tooltip"
+            className={`ec-state-tooltip is-${activeBlock.winner}`}
+            role="tooltip"
+            style={{ "--tooltip-position": `${activeBlock.position}%` } as React.CSSProperties}
+          >
+            <span className="ec-tooltip-code">{activeBlock.state_code}</span>
+            <strong>{activeBlock.state}</strong>
+            <span>{activeBlock.ev} electoral votes · {winnerLabel(activeBlock.winner)}</span>
+          </div>
+        )}
         <div style={{ position: "absolute", left: `${(270 / total) * 100}%`, top: -4, bottom: -4, width: 1, backgroundColor: "var(--nd-text-disabled)", pointerEvents: "none" }} />
       </div>
     </div>
