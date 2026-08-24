@@ -8,6 +8,7 @@ export default function SiteFooter() {
         <p>Data, geography and machine learning at county level.</p>
       </div>
       <div className="site-footer-links">
+        <Link href="/project">About the project</Link>
         <Link href="/methodology">Methodology</Link>
         <Link href="/data">Sources &amp; data</Link>
         <a href="https://github.com/jorgegarcelan/US-Elections" target="_blank" rel="noreferrer">Repository ↗</a>

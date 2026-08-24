@@ -31,6 +31,7 @@ interface CountyData {
   unemployment_rate: number;
   latitude: number;
   longitude: number;
+  gop_win_prob?: number;
   isPrediction?: boolean;
   isStateView?: boolean;
 }
@@ -99,7 +100,7 @@ export interface PredResult {
 }
 
 type Year = "2016" | "2020" | "2024" | "predict";
-type MapMode = "winner" | "margin" | "shift";
+type MapMode = "winner" | "margin" | "shift" | "confidence";
 type PredModel = "xgboost" | "random_forest" | "ridge";
 type GeoLevel = "county" | "state";
 
@@ -147,10 +148,46 @@ function shiftFill(delta: number) {
   return "#5B9BF6";
 }
 
+function confidenceFill(gopProbability?: number) {
+  if (gopProbability === undefined) return "#3A3834";
+  if (gopProbability >= 0.85) return "#D71921";
+  if (gopProbability >= 0.60) return "#FF7A84";
+  if (gopProbability > 0.40) return "#C9C2A8";
+  if (gopProbability > 0.15) return "#79A7F6";
+  return "#274F9F";
+}
+
+function confidenceLabel(gopProbability?: number) {
+  if (gopProbability === undefined) return "No confidence data";
+  if (gopProbability >= 0.85) return "Safe Republican";
+  if (gopProbability >= 0.60) return "Leans Republican";
+  if (gopProbability > 0.40) return "Toss-up";
+  if (gopProbability > 0.15) return "Leans Democratic";
+  return "Safe Democratic";
+}
+
 function countyFill(d: CountyData, mode: MapMode) {
   if (mode === "winner") return winnerFill(d.winner);
   if (mode === "margin") return marginFill(d.per_gop, d.per_dem);
+  if (mode === "confidence") return confidenceFill(d.gop_win_prob);
   return shiftFill(d.delta_per_gop);
+}
+
+function shiftArrowGeometry(delta: number, geoLevel: GeoLevel) {
+  const direction = delta >= 0 ? 1 : -1;
+  const minLength = geoLevel === "state" ? 8 : 2.5;
+  const maxLength = geoLevel === "state" ? 30 : 9;
+  const magnitude = Math.min(Math.abs(delta), 15) / 15;
+  const length = minLength + (maxLength - minLength) * magnitude;
+  const headSize = geoLevel === "state" ? 3.5 : 1.35;
+  const tailX = -direction * length / 2;
+  const headX = direction * length / 2;
+  const headBackX = headX - direction * headSize;
+
+  return {
+    color: delta > 0 ? "#8f0f18" : delta < 0 ? "#214e9d" : "#555555",
+    path: `M ${tailX} 0 L ${headX} 0 M ${headBackX} ${-headSize} L ${headX} 0 L ${headBackX} ${headSize}`,
+  };
 }
 
 // ── Formatting ─────────────────────────────────────────────────────────────────
@@ -371,7 +408,8 @@ function VoteBar({ gopPct, demPct }: { gopPct: number; demPct: number }) {
 const LEGENDS: Record<MapMode, { color: string; label: string }[]> = {
   winner:  [{ color: "#D71921", label: "Republican" }, { color: "#5B9BF6", label: "Democrat" }],
   margin:  [{ color: "#D71921", label: "R +40%" }, { color: "rgba(215,25,33,0.40)", label: "R +10%" }, { color: "rgba(215,25,33,0.20)", label: "R +1%" }, { color: "#2A2A2A", label: "Toss-up" }, { color: "rgba(91,155,246,0.20)", label: "D +1%" }, { color: "rgba(91,155,246,0.40)", label: "D +10%" }, { color: "#5B9BF6", label: "D +40%" }],
-  shift:   [{ color: "#D71921", label: "→ R swing +12 pp" }, { color: "rgba(215,25,33,0.40)", label: "→ R swing +3 pp" }, { color: "#2A2A2A", label: "No shift" }, { color: "rgba(91,155,246,0.40)", label: "← D swing +3 pp" }, { color: "#5B9BF6", label: "← D swing +12 pp" }],
+  shift:   [{ color: "#D71921", label: "↗ R swing +12 pp" }, { color: "rgba(215,25,33,0.40)", label: "↗ R swing +3 pp" }, { color: "#2A2A2A", label: "No shift" }, { color: "rgba(91,155,246,0.40)", label: "↙ D swing +3 pp" }, { color: "#5B9BF6", label: "↙ D swing +12 pp" }],
+  confidence: [{ color: "#274F9F", label: "Safe D · 85%+" }, { color: "#79A7F6", label: "Lean D · 60–84%" }, { color: "#C9C2A8", label: "Toss-up · 40–60%" }, { color: "#FF7A84", label: "Lean R · 60–84%" }, { color: "#D71921", label: "Safe R · 85%+" }],
 };
 
 // ── Main ───────────────────────────────────────────────────────────────────────
@@ -574,6 +612,7 @@ export default function ElectionDashboard({
         unemployment_rate: 0,
         latitude: group.latitude / Math.max(group.coordWeight, 1),
         longitude: group.longitude / Math.max(group.coordWeight, 1),
+        gop_win_prob: predicted?.gop_win_prob,
         isPrediction: year === "predict",
         isStateView: true,
       };
@@ -583,11 +622,13 @@ export default function ElectionDashboard({
 
   const shiftMarkers = useMemo(() => {
     const source = geoLevel === "state" ? Object.values(stateViewMap) : counties;
-    const threshold = geoLevel === "state" ? 0.5 : 4;
-    return source
-      .filter((item) => item.latitude && item.longitude && Math.abs(item.delta_per_gop) >= threshold)
-      .sort((a, b) => Math.abs(b.delta_per_gop) - Math.abs(a.delta_per_gop))
-      .slice(0, geoLevel === "state" ? 51 : 90);
+    return source.filter((item) => (
+      Number.isFinite(item.latitude)
+      && Number.isFinite(item.longitude)
+      && item.latitude !== 0
+      && item.longitude !== 0
+      && Math.abs(item.delta_per_gop) >= 2
+    ));
   }, [counties, geoLevel, stateViewMap]);
 
   const stateBlocks = useMemo((): StateBlock[] => {
@@ -685,7 +726,7 @@ export default function ElectionDashboard({
               U.S. Presidential Elections
             </div>
             <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--nd-text-disabled)", marginTop: 2 }}>
-              {MATCHUP[year]} · County Level
+              {MATCHUP[year]} · {mode === "confidence" || geoLevel === "state" ? "State Level" : "County Level"}
             </div>
           </div>
         </div>
@@ -752,14 +793,18 @@ export default function ElectionDashboard({
           )}
 
           {/* Geography level */}
-          <SegmentedControl<GeoLevel>
-            options={[
-              { value: "county", label: "County" },
-              { value: "state", label: "State" },
-            ]}
-            value={geoLevel}
-            onChange={setGeoLevel}
-          />
+          {mode === "confidence" ? (
+            <div style={{ padding: "7px 11px", border: "1px solid var(--nd-border-visible)", borderRadius: 4, fontFamily: "var(--font-mono)", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase", color: "var(--nd-text-secondary)" }}>State confidence</div>
+          ) : (
+            <SegmentedControl<GeoLevel>
+              options={[
+                { value: "county", label: "County" },
+                { value: "state", label: "State" },
+              ]}
+              value={geoLevel}
+              onChange={setGeoLevel}
+            />
+          )}
 
           {/* Year selector */}
           {!predictionOnly && (
@@ -771,7 +816,10 @@ export default function ElectionDashboard({
                 ...(!historicalOnly ? [{ value: "predict" as Year, label: "Predict" }] : []),
               ]}
               value={year}
-              onChange={setYear}
+              onChange={(nextYear) => {
+                setYear(nextYear);
+                if (nextYear !== "predict" && mode === "confidence") setMode("winner");
+              }}
             />
           )}
 
@@ -781,9 +829,13 @@ export default function ElectionDashboard({
               { value: "winner", label: "Winner" },
               { value: "margin", label: "Margin" },
               { value: "shift",  label: "Shift"  },
+              ...(year === "predict" ? [{ value: "confidence" as MapMode, label: "Confidence" }] : []),
             ]}
             value={mode}
-            onChange={setMode}
+            onChange={(nextMode) => {
+              setMode(nextMode);
+              if (nextMode === "confidence") setGeoLevel("state");
+            }}
           />
         </div>
       </header>
@@ -825,7 +877,7 @@ export default function ElectionDashboard({
           {geoData && (
             <ComposableMap
               role="img"
-              aria-label={`County-level election map for ${year === "predict" ? "the current prediction" : year}`}
+              aria-label={`${mode === "confidence" || geoLevel === "state" ? "State-level" : "County-level"} election map for ${year === "predict" ? "the current prediction" : year}`}
               projection="geoAlbersUsa"
               style={{ width: "100%", height: "100%" }}
               projectionConfig={{ scale: 1050 }}
@@ -856,32 +908,38 @@ export default function ElectionDashboard({
                     })
                   }
                 </Geographies>
-                {mode === "shift" && shiftMarkers.map((item) => (
-                  <Marker key={item.county_fips} coordinates={[item.longitude, item.latitude]}>
-                    <text
-                      aria-hidden="true"
-                      textAnchor="middle"
-                      dominantBaseline="central"
-                      fill="#ffffff"
-                      stroke={item.delta_per_gop > 0 ? "#8f0f18" : "#214e9d"}
-                      strokeWidth={geoLevel === "state" ? 1.5 : 1}
-                      paintOrder="stroke"
-                      fontFamily="var(--font-mono)"
-                      fontSize={geoLevel === "state" ? 12 : 7}
-                      fontWeight={700}
-                      style={{ pointerEvents: "none" }}
-                    >
-                      {item.delta_per_gop > 0 ? "→" : "←"}
-                    </text>
-                  </Marker>
-                ))}
+                {mode === "shift" && shiftMarkers.map((item) => {
+                  const arrow = shiftArrowGeometry(item.delta_per_gop, geoLevel);
+                  return (
+                    <Marker key={item.county_fips} coordinates={[item.longitude, item.latitude]}>
+                      <g aria-hidden="true" transform="rotate(-45)" style={{ pointerEvents: "none" }}>
+                        <path
+                          d={arrow.path}
+                          fill="none"
+                          stroke={arrow.color}
+                          strokeWidth={geoLevel === "state" ? 4 : 2.2}
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                        <path
+                          d={arrow.path}
+                          fill="none"
+                          stroke="#ffffff"
+                          strokeWidth={geoLevel === "state" ? 1.8 : 0.8}
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </g>
+                    </Marker>
+                  );
+                })}
               </ZoomableGroup>
             </ComposableMap>
           )}
 
           {/* Legend */}
           <div style={{ position: "absolute", bottom: 16, left: 16, backgroundColor: "var(--nd-surface)", border: "1px solid var(--nd-border-visible)", borderRadius: 4, padding: "10px 14px" }}>
-            <div style={{ marginBottom: 8 }}><Label>{mode === "winner" ? "Winner" : mode === "margin" ? "Vote margin" : `Shift vs. ${PREV_YEAR[year]}`}</Label></div>
+            <div style={{ marginBottom: 8 }}><Label>{mode === "winner" ? "Winner" : mode === "margin" ? "Vote margin" : mode === "confidence" ? "State win probability" : `Shift vs. ${PREV_YEAR[year]}`}</Label></div>
             <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
               {LEGENDS[mode].map(({ color, label }) => (
                 <div key={label} style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -1084,9 +1142,19 @@ export default function ElectionDashboard({
             </div>
           )}
 
-          {(mode === "shift" || tooltip.d.isPrediction) && (
+          {mode === "confidence" && tooltip.d.gop_win_prob !== undefined && (
+            <div style={{ marginTop: 10, paddingTop: 9, borderTop: "1px solid var(--nd-border)", fontFamily: "var(--font-mono)" }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: confidenceFill(tooltip.d.gop_win_prob), letterSpacing: "0.04em" }}>{confidenceLabel(tooltip.d.gop_win_prob)}</div>
+              <div style={{ marginTop: 5, display: "flex", justifyContent: "space-between", gap: 18, fontSize: 9, color: "var(--nd-text-secondary)" }}>
+                <span>R wins {(tooltip.d.gop_win_prob * 100).toFixed(0)}%</span>
+                <span>D wins {((1 - tooltip.d.gop_win_prob) * 100).toFixed(0)}%</span>
+              </div>
+            </div>
+          )}
+
+          {mode !== "confidence" && (mode === "shift" || tooltip.d.isPrediction) && (
             <div style={{ marginTop: 8, fontFamily: "var(--font-mono)", fontSize: 11, fontWeight: 700, color: tooltip.d.delta_per_gop > 0 ? "#D71921" : "#5B9BF6", letterSpacing: "0.04em" }}>
-              {tooltip.d.delta_per_gop > 0 ? "→ R +" : "← D +"}
+              {tooltip.d.delta_per_gop >= 0 ? "↗ R +" : "↙ D +"}
               {points(tooltip.d.delta_per_gop)} vs. {PREV_YEAR[year]}
             </div>
           )}

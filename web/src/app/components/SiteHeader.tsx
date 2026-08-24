@@ -7,6 +7,7 @@ const navigation = [
   { href: "/results", label: "Our Results" },
   { href: "/methodology", label: "Method" },
   { href: "/data", label: "Data" },
+  { href: "/project", label: "Project" },
 ];
 
 export default function SiteHeader() {
