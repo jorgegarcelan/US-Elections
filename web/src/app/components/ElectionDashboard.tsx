@@ -8,6 +8,7 @@ import {
   ZoomableGroup,
 } from "react-simple-maps";
 import Papa from "papaparse";
+import AnimatedNumber from "./AnimatedNumber";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -217,7 +218,7 @@ function ECBar({
         {/* GOP */}
         <div>
           <div style={{ fontFamily: "var(--font-display)", fontSize: 64, lineHeight: 1, color: "#D71921", letterSpacing: "-0.02em" }}>
-            {gopEV}
+            <AnimatedNumber value={gopEV} />
           </div>
           <Label>Republican</Label>
         </div>
@@ -253,23 +254,25 @@ function ECBar({
         {/* DEM */}
         <div style={{ textAlign: "right" }}>
           <div style={{ fontFamily: "var(--font-display)", fontSize: 64, lineHeight: 1, color: "#5B9BF6", letterSpacing: "-0.02em" }}>
-            {demEV}
+            <AnimatedNumber value={demEV} />
           </div>
           <Label>Democrat</Label>
         </div>
       </div>
 
       {/* State blocks */}
-      <div style={{ display: "flex", height: 20, gap: 2, position: "relative" }}>
-        {sorted.map((b) => (
+      <div key={`${gopEV}-${demEV}-${unallocatedEV}`} style={{ display: "flex", height: 20, gap: 2, position: "relative" }}>
+        {sorted.map((b, index) => (
           <div
             key={b.state_code}
+            className="ec-state-block"
             title={`${b.state} · ${b.ev} EV`}
             style={{
+              "--box-index": index,
               flex: b.ev,
               backgroundColor: b.winner === "gop" ? "#D71921" : b.winner === "dem" ? "#5B9BF6" : "var(--nd-border-visible)",
               display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", cursor: "default",
-            }}
+            } as React.CSSProperties}
           >
             {b.ev >= 10 && (
               <span style={{ fontFamily: "var(--font-mono)", fontSize: 8, letterSpacing: "0.04em", color: b.winner === "gop" ? "rgba(255,255,255,0.7)" : "rgba(0,0,0,0.6)", userSelect: "none", textTransform: "uppercase" }}>
