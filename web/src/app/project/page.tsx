@@ -13,9 +13,8 @@ const projectLinks = [
   { number: "01", href: "/results", title: "Our results", copy: "Read the final simulation, electoral map, distributions and state-level uncertainty.", action: "Open results" },
   { number: "02", href: "/explore", title: "Election atlas", copy: "Explore historical presidential results at state and county level.", action: "Explore elections" },
   { number: "03", href: "/variables", title: "Variables", copy: "Compare vote outcomes with income, education, race, age and other county characteristics.", action: "Explore variables" },
-  { number: "04", href: "/simulations", title: "Simulation lab", copy: "Change the assumptions and run a new electoral scenario of your own.", action: "Run a simulation" },
-  { number: "05", href: "/methodology", title: "Methodology", copy: "Follow the path from raw public data to county estimates and Electoral College outcomes.", action: "Read the method" },
-  { number: "06", href: "/data", title: "Data", copy: "Find the public sources, feature dictionary and downloadable project datasets.", action: "See the sources" },
+  { number: "04", href: "/methodology", title: "Methodology", copy: "Follow the path from raw public data to county estimates and Electoral College outcomes.", action: "Read the method" },
+  { number: "05", href: "/data", title: "Data", copy: "Find the public sources, feature dictionary and downloadable project datasets.", action: "See the sources" },
 ];
 
 const people = [
