@@ -16,6 +16,10 @@ export async function GET(request: Request) {
       headers: { "content-type": response.headers.get("content-type") ?? "application/json" },
     });
   } catch {
-    return fetch(new URL(`/data/explain-${model}.json`, incoming.origin), { cache: "force-cache" });
+    const fallback = await fetch(new URL(`/data/explain-${model}.json`, incoming.origin), { cache: "force-cache" });
+    return new Response(await fallback.text(), {
+      status: fallback.status,
+      headers: { "content-type": "application/json; charset=utf-8", "cache-control": "public, max-age=300" },
+    });
   }
 }

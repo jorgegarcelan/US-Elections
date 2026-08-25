@@ -20,7 +20,11 @@ export async function GET(request: Request) {
     return new Response(body, { status: response.status, headers: { "content-type": response.headers.get("content-type") ?? "application/json" } });
   } catch {
     if (model === "xgboost" && nSim === 1000 && seed === 20240824) {
-      return fetch(new URL("/data/prediction-xgboost-seed-20240824.json", incoming.origin), { cache: "force-cache" });
+      const fallback = await fetch(new URL("/data/prediction-xgboost-seed-20240824.json", incoming.origin), { cache: "force-cache" });
+      return new Response(await fallback.text(), {
+        status: fallback.status,
+        headers: { "content-type": "application/json; charset=utf-8", "cache-control": "public, max-age=300" },
+      });
     }
     return Response.json({ detail: "Prediction service unavailable" }, { status: 503 });
   }
