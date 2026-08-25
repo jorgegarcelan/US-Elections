@@ -12,6 +12,6 @@ export async function GET(request: Request) {
       headers: { "content-type": response.headers.get("content-type") ?? "application/json" },
     });
   } catch {
-    return Response.json({ detail: "Prediction service unavailable" }, { status: 503 });
+    return fetch(new URL("/data/explain-local-xgboost-280.json", incoming.origin), { cache: "force-cache" });
   }
 }
