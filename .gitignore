@@ -1,5 +1,11 @@
 *.pdf
 *.png
+!web/public/og.png
+!web/public/favicon.png
+!web/public/favicon-32x32.png
+!web/public/apple-touch-icon.png
+!web/public/brand/
+!web/public/brand/*.png
 .venv
 .env
 imgs

@@ -1,0 +1,503 @@
+"""
+Election Prediction API
+Replicates the Monte-Carlo simulation from simulation.ipynb
+"""
+
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Literal, Optional
+
+import joblib
+import numpy as np
+import pandas as pd
+import xgboost as xgb
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
+
+BASE = Path(__file__).parent.parent  # project root
+
+# ── State shared across requests ──────────────────────────────────────────────
+
+state: dict = {}
+
+# ── Data preparation (mirrors simulation.ipynb cells 9–27) ───────────────────
+
+def prepare_data():
+    data_2020 = pd.read_csv(BASE / "data/final_data_2020.csv").sort_values("county_fips").reset_index(drop=True)
+    data_2024 = pd.read_csv(BASE / "data/final_data_2024.csv").sort_values("county_fips").reset_index(drop=True)
+    seats = pd.read_csv(BASE / "data/seats.csv")
+
+    # Baseline 2020 per-county values (used to convert delta → absolute %)
+    votes_2020     = data_2020["total_votes"].values.astype(float)
+    per_dem_2020   = data_2020["per_dem"].values.astype(float)
+    per_gop_2020   = data_2020["per_gop"].values.astype(float)
+    county_fips    = data_2024["county_fips"].astype(str).str.zfill(5).values
+    county_names   = data_2024["county"].values
+    state_names    = data_2024["state"].values
+    latitudes      = data_2024["latitude"].values.astype(float)
+    longitudes     = data_2024["longitude"].values.astype(float)
+
+    # Build X_sim: mirrors exactly the notebook preprocessing
+    DROP_VOTE  = ["votes_dem", "total_votes", "votes_others", "per_votes_others", "winner", "votes_gop"]
+    DROP_ID    = ["county_fips", "county", "state_code", "county_code"]
+    DROP_TGTS  = ["delta_per_dem", "delta_per_gop", "delta_per_oth", "per_dem", "per_gop"]
+
+    data_sim = data_2024.drop(columns=[c for c in DROP_VOTE + DROP_ID if c in data_2024.columns])
+    data_sim = pd.get_dummies(data_sim, columns=["state"], drop_first=False)
+    X_sim = data_sim.drop(columns=[c for c in DROP_TGTS if c in data_sim.columns])
+
+    return {
+        "X_sim":         X_sim,
+        "votes_2020":    votes_2020,
+        "per_dem_2020":  per_dem_2020,
+        "per_gop_2020":  per_gop_2020,
+        "county_fips":   county_fips,
+        "county_names":  county_names,
+        "state_names":   state_names,
+        "latitudes":     latitudes,
+        "longitudes":    longitudes,
+        "seats":         seats,
+    }
+
+
+def load_models():
+    available = {}
+    for algo in ("xgboost", "random_forest", "ridge"):
+        for year in ("2016", "2020"):
+            for target in ("dem", "gop"):
+                key  = f"{algo}_delta_{target}_{year}"
+                path = BASE / f"models/{key}.pkl"
+                if path.exists():
+                    available[key] = joblib.load(str(path))
+    return available
+
+
+def predict_aligned(model, frame: pd.DataFrame) -> np.ndarray:
+    """Align the current simulation table to the exact training feature schema."""
+    feature_names = getattr(model, "feature_names_in_", None)
+    if feature_names is not None:
+        aligned = frame.reindex(columns=list(feature_names), fill_value=0)
+    else:
+        expected = getattr(model, "n_features_in_", frame.shape[1])
+        aligned = frame.iloc[:, :expected]
+    return model.predict(aligned).astype(float)
+
+
+# ── App lifecycle ─────────────────────────────────────────────────────────────
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    print("[api] Loading data and models...")
+    state["data"]   = prepare_data()
+    state["models"] = load_models()
+    print(f"[api] Loaded {len(state['models'])} model files.")
+    yield
+    state.clear()
+
+
+app = FastAPI(title="Election Prediction API", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_methods=["GET"],
+    allow_headers=["*"],
+)
+
+
+# ── Simulation ────────────────────────────────────────────────────────────────
+
+def run_simulation(
+    n_sim:  int,
+    algo:   str,
+    models: dict,
+    data:   dict,
+    seed:   Optional[int] = None,
+) -> dict:
+    d            = data
+    X_sim        = d["X_sim"]
+    votes_2020   = d["votes_2020"]
+    per_dem_2020 = d["per_dem_2020"]
+    per_gop_2020 = d["per_gop_2020"]
+    state_names  = d["state_names"]
+    county_names = d["county_names"]
+    county_fips  = d["county_fips"]
+    latitudes    = d["latitudes"]
+    longitudes   = d["longitudes"]
+    seats        = d["seats"]
+    alaska_ev    = int(seats.loc[seats["state"] == "Alaska", "ElectoralVotes2024"].sum())
+
+    n_counties = len(X_sim)
+
+    # Retrieve the four required models
+    try:
+        m_dem_2016 = models[f"{algo}_delta_dem_2016"]
+        m_gop_2016 = models[f"{algo}_delta_gop_2016"]
+        m_dem_2020 = models[f"{algo}_delta_dem_2020"]
+        m_gop_2020 = models[f"{algo}_delta_gop_2020"]
+    except KeyError as e:
+        raise HTTPException(400, f"Model not found: {e}")
+
+    # Pre-compute deterministic model predictions (same for all simulations)
+    pred_dem_2016 = predict_aligned(m_dem_2016, X_sim)
+    pred_gop_2016 = predict_aligned(m_gop_2016, X_sim)
+    pred_dem_2020 = predict_aligned(m_dem_2020, X_sim)
+    pred_gop_2020 = predict_aligned(m_gop_2020, X_sim)
+
+    # Accumulators
+    acc_per_dem  = np.zeros(n_counties)
+    acc_per_gop  = np.zeros(n_counties)
+    acc_delta_d  = np.zeros(n_counties)
+    acc_delta_g  = np.zeros(n_counties)
+    acc_votes_d  = np.zeros(n_counties)
+    acc_votes_g  = np.zeros(n_counties)
+    acc_votes_t  = np.zeros(n_counties)
+
+    sim_results = []  # (dem_ev, gop_ev, winner) per run
+    state_win_counts: dict[str, dict[str, int]] = {}
+
+    rng = np.random.default_rng(seed)
+
+    for _ in range(n_sim):
+        # Random weights (mirror notebook)
+        w16      = rng.uniform(0.3, 1.0)
+        w20      = 1.0 - w16
+        delta_d  = (w16 * pred_dem_2016 + w20 * pred_dem_2020) / (w16 + w20)
+        delta_g  = (w16 * pred_gop_2016 + w20 * pred_gop_2020) / (w16 + w20)
+
+        # Turnout noise
+        wt         = rng.uniform(0.9, 1.1)
+        total_v    = votes_2020 * wt
+
+        per_d      = np.clip(delta_d / 100.0 + per_dem_2020, 0.0, 1.0)
+        per_g      = np.clip(delta_g / 100.0 + per_gop_2020, 0.0, 1.0)
+
+        votes_d    = per_d * total_v
+        votes_g    = per_g * total_v
+
+        acc_per_dem  += per_d
+        acc_per_gop  += per_g
+        acc_delta_d  += delta_d
+        acc_delta_g  += delta_g
+        acc_votes_d  += votes_d
+        acc_votes_g  += votes_g
+        acc_votes_t  += total_v
+
+        # State-level aggregation → electoral college
+        df = pd.DataFrame({
+            "state":   state_names,
+            "votes_d": votes_d,
+            "votes_g": votes_g,
+            "votes_t": total_v,
+        })
+        agg = df.groupby("state").agg(
+            votes_d=("votes_d", "sum"),
+            votes_g=("votes_g", "sum"),
+            votes_t=("votes_t", "sum"),
+        ).reset_index()
+        # simulation.ipynb resolves the state contest as a two-party share:
+        # Per_dem = Votes_dem / Votes_total and Per_gop = 1 - Per_dem.
+        agg["per_d"] = agg["votes_d"] / agg["votes_t"]
+        agg["winner"] = np.where(agg["per_d"] >= 0.5, "dem", "gop")
+        for state_row in agg.itertuples():
+            counts = state_win_counts.setdefault(state_row.state, {"dem": 0, "gop": 0})
+            counts[state_row.winner] += 1
+
+        merged = seats.merge(agg[["state", "winner"]], on="state", how="inner")
+        ev = merged.groupby("winner")["ElectoralVotes2024"].sum().to_dict()
+        ev_d = int(ev.get("dem", 0))
+        # Alaska has no county rows in the project dataset. The executed notebook
+        # assigns its three electoral votes to the GOP as an explicit prior.
+        ev_g = int(ev.get("gop", 0)) + alaska_ev
+
+        w = "dem" if ev_d > ev_g else ("gop" if ev_g > ev_d else "tie")
+        sim_results.append((ev_d, ev_g, w))
+
+    # Average over simulations
+    avg_per_dem = acc_per_dem / n_sim
+    avg_per_gop = acc_per_gop / n_sim
+    avg_delta_d = acc_delta_d / n_sim
+    avg_delta_g = acc_delta_g / n_sim
+    avg_votes_d = acc_votes_d / n_sim
+    avg_votes_g = acc_votes_g / n_sim
+    avg_votes_t = acc_votes_t / n_sim
+
+    # County-level results
+    counties = []
+    for i in range(n_counties):
+        pd_  = float(avg_per_dem[i])
+        pg_  = 1.0 - pd_
+        winner = "dem" if pd_ >= 0.5 else "gop"
+        counties.append({
+            "fips":     county_fips[i],
+            "county":   county_names[i],
+            "state":    state_names[i],
+            "per_dem":  round(pd_, 4),
+            "per_gop":  round(pg_, 4),
+            "winner":   winner,
+            "delta_dem": round(float(avg_delta_d[i]), 3),
+            "delta_gop": round(float(avg_delta_g[i]), 3),
+            "latitude":  round(float(latitudes[i]), 6),
+            "longitude": round(float(longitudes[i]), 6),
+        })
+
+    # State-level results — use accumulated vote totals (not per-county pct means)
+    df_c = pd.DataFrame({
+        "state":   state_names,
+        "votes_d": avg_votes_d,
+        "votes_g": avg_votes_g,
+        "votes_t": avg_votes_t,
+    })
+    agg_s = df_c.groupby("state").agg(
+        votes_d=("votes_d", "sum"),
+        votes_g=("votes_g", "sum"),
+        votes_t=("votes_t", "sum"),
+    ).reset_index()
+    agg_s["per_d"]   = agg_s["votes_d"] / agg_s["votes_t"]
+    agg_s["per_g"]   = 1.0 - agg_s["per_d"]
+    agg_s["winner"]  = np.where(agg_s["per_d"] >= 0.5, "dem", "gop")
+    agg_s["diff"]    = (agg_s["per_d"] - agg_s["per_g"]) * 100
+
+    def classify(diff):
+        if diff > 10:   return "Safe Democrat"
+        if diff > 2.5:  return "Likely Democrat"
+        if diff > -2.5: return "Toss-Up"
+        if diff > -10:  return "Likely Republican"
+        return "Safe Republican"
+
+    agg_s["status"] = agg_s["diff"].apply(classify)
+
+    merged_s = seats.merge(agg_s, on="state", how="inner")
+    merged_s["state_code"] = merged_s["state_code"].str.upper()
+
+    state_results = [
+        {
+            "state":           row["state"],
+            "state_code":      row["state_code"],
+            "per_dem":         round(float(row["per_d"]), 4),
+            "per_gop":         round(float(row["per_g"]), 4),
+            "winner":          row["winner"],
+            "electoral_votes": int(row["ElectoralVotes2024"]),
+            "status":          row["status"],
+            "gop_win_prob":    round(state_win_counts.get(row["state"], {}).get("gop", 0) / n_sim, 3),
+        }
+        for _, row in merged_s.iterrows()
+    ]
+    state_results.append({
+        "state":           "Alaska",
+        "state_code":      "AK",
+        "per_dem":         0.0,
+        "per_gop":         1.0,
+        "winner":          "gop",
+        "electoral_votes": alaska_ev,
+        "status":          "Assumed Republican",
+        "assumption":      True,
+        "gop_win_prob":    1.0,
+    })
+
+    # Electoral college totals from averaged state calls
+    ev_by_winner = merged_s.groupby("winner")["ElectoralVotes2024"].sum().to_dict()
+    total_ev_d = int(ev_by_winner.get("dem", 0))
+    total_ev_g = int(ev_by_winner.get("gop", 0)) + alaska_ev
+    ec_winner  = "dem" if total_ev_d > total_ev_g else "gop"
+
+    # Simulation distribution
+    evs_d  = [r[0] for r in sim_results]
+    evs_g  = [r[1] for r in sim_results]
+    wins   = [r[2] for r in sim_results]
+    dem_p  = wins.count("dem") / n_sim
+    gop_p  = wins.count("gop") / n_sim
+    unique_gop_ev, outcome_counts = np.unique(evs_g, return_counts=True)
+    ev_distribution = [
+        {
+            "gop_ev": int(gop_ev),
+            "dem_ev": int(538 - gop_ev),
+            "count": int(count),
+            "probability": round(float(count / n_sim), 4),
+        }
+        for gop_ev, count in zip(unique_gop_ev, outcome_counts)
+    ]
+
+    return {
+        "counties":   counties,
+        "states":     state_results,
+        "electoral":  {
+            "dem":    total_ev_d,
+            "gop":    total_ev_g,
+            "unallocated": int(seats[~seats["state"].isin(list(merged_s["state"]) + ["Alaska"])]["ElectoralVotes2024"].sum()),
+            "winner": ec_winner,
+        },
+        "simulation": {
+            "n_sim":        n_sim,
+            "model":        algo,
+            "dem_win_prob": round(dem_p, 3),
+            "gop_win_prob": round(gop_p, 3),
+            "dem_ev_mean":  round(float(np.mean(evs_d)), 1),
+            "gop_ev_mean":  round(float(np.mean(evs_g)), 1),
+            "dem_ev_std":   round(float(np.std(evs_d)),  1),
+            "gop_ev_std":   round(float(np.std(evs_g)),  1),
+            "dem_ev_p05":   round(float(np.quantile(evs_d, 0.05)), 1),
+            "dem_ev_p50":   round(float(np.quantile(evs_d, 0.50)), 1),
+            "dem_ev_p95":   round(float(np.quantile(evs_d, 0.95)), 1),
+            "gop_ev_p05":   round(float(np.quantile(evs_g, 0.05)), 1),
+            "gop_ev_p50":   round(float(np.quantile(evs_g, 0.50)), 1),
+            "gop_ev_p95":   round(float(np.quantile(evs_g, 0.95)), 1),
+            "ev_distribution": ev_distribution,
+            "seed": seed,
+            "dem_popular_share": round(float(avg_votes_d.sum() / avg_votes_t.sum()), 4),
+            "gop_popular_share": round(float(1.0 - (avg_votes_d.sum() / avg_votes_t.sum())), 4),
+        },
+    }
+
+
+# ── Routes ────────────────────────────────────────────────────────────────────
+
+@app.get("/health")
+def health():
+    return {
+        "status": "ok",
+        "models": list(state.get("models", {}).keys()),
+    }
+
+
+@app.get("/explain")
+def explain(
+    model: Literal["xgboost", "random_forest", "ridge"] = Query(default="xgboost"),
+):
+    """Return global model-native importance averaged across years and parties."""
+    models = state.get("models", {})
+    if not models:
+        raise HTTPException(503, "Server not ready")
+
+    accumulated: dict[str, list[float]] = {}
+    for year in ("2016", "2020"):
+        for target in ("dem", "gop"):
+            estimator = models.get(f"{model}_delta_{target}_{year}")
+            if estimator is None:
+                continue
+            names = list(getattr(estimator, "feature_names_in_", []))
+            if hasattr(estimator, "feature_importances_"):
+                values = np.asarray(estimator.feature_importances_, dtype=float)
+            elif hasattr(estimator, "coef_"):
+                values = np.abs(np.asarray(estimator.coef_, dtype=float)).reshape(-1)
+                frame = state["data"]["X_sim"].reindex(columns=names, fill_value=0)
+                values = values * frame.std(axis=0).to_numpy(dtype=float)
+            else:
+                continue
+            for name, value in zip(names, values):
+                if str(name).startswith("state_"):
+                    continue
+                accumulated.setdefault(str(name), []).append(float(value))
+
+    averaged = {name: float(np.mean(values)) for name, values in accumulated.items()}
+    total = sum(averaged.values()) or 1.0
+    features = [
+        {"feature": name, "importance": round(value / total, 6)}
+        for name, value in sorted(averaged.items(), key=lambda item: item[1], reverse=True)[:15]
+    ]
+    return {
+        "model": model,
+        "method": "mean standardized absolute coefficient" if model == "ridge" else "mean tree importance",
+        "features": features,
+        "note": "Global association within the fitted model; it is not a causal effect.",
+    }
+
+
+@app.get("/explain-local")
+def explain_local(
+    limit: int = Query(default=280, ge=80, le=500),
+):
+    """Return county-level XGBoost contributions for a compact SHAP beeswarm."""
+    models = state.get("models", {})
+    data = state.get("data")
+    if not models or not data:
+        raise HTTPException(503, "Server not ready")
+
+    cache_key = f"local_explain_{limit}"
+    if cache_key in state:
+        return state[cache_key]
+
+    frame = data["X_sim"]
+    accumulated: dict[str, np.ndarray] = {}
+    contribution_sets = 0
+
+    for year in ("2016", "2020"):
+        dem_model = models.get(f"xgboost_delta_dem_{year}")
+        gop_model = models.get(f"xgboost_delta_gop_{year}")
+        if dem_model is None or gop_model is None:
+            continue
+
+        def local_contributions(estimator):
+            names = list(getattr(estimator, "feature_names_in_", []))
+            aligned = frame.reindex(columns=names, fill_value=0)
+            matrix = xgb.DMatrix(aligned, feature_names=names)
+            values = estimator.get_booster().predict(matrix, pred_contribs=True)[:, :-1]
+            return names, values
+
+        dem_names, dem_values = local_contributions(dem_model)
+        gop_names, gop_values = local_contributions(gop_model)
+        dem_lookup = {name: dem_values[:, index] for index, name in enumerate(dem_names)}
+        gop_lookup = {name: gop_values[:, index] for index, name in enumerate(gop_names)}
+
+        for name in set(dem_lookup) | set(gop_lookup):
+            if str(name).startswith("state_"):
+                continue
+            dem_contribution = dem_lookup.get(name, np.zeros(len(frame)))
+            gop_contribution = gop_lookup.get(name, np.zeros(len(frame)))
+            accumulated[name] = accumulated.get(name, np.zeros(len(frame))) + gop_contribution - dem_contribution
+        contribution_sets += 1
+
+    if contribution_sets == 0:
+        raise HTTPException(503, "Local XGBoost contributions unavailable")
+
+    averaged = {name: values / contribution_sets for name, values in accumulated.items()}
+    top_features = sorted(averaged, key=lambda name: float(np.mean(np.abs(averaged[name]))), reverse=True)[:6]
+    county_names = data["county_names"]
+    state_names = data["state_names"]
+    county_fips = data["county_fips"]
+    feature_rows = []
+
+    for feature in top_features:
+        contributions = averaged[feature]
+        raw_values = pd.to_numeric(frame[feature], errors="coerce").fillna(0).to_numpy(dtype=float)
+        value_ranks = pd.Series(raw_values).rank(method="average", pct=True).to_numpy(dtype=float)
+        ordered = np.argsort(contributions)
+        sample_positions = np.linspace(0, len(ordered) - 1, min(limit, len(ordered)), dtype=int)
+        sample_indices = ordered[sample_positions]
+        points = [
+            {
+                "fips": str(county_fips[index]),
+                "county": str(county_names[index]),
+                "state": str(state_names[index]),
+                "contribution": round(float(contributions[index]), 4),
+                "feature_value": round(float(raw_values[index]), 4),
+                "value_percentile": round(float(value_ranks[index]), 4),
+            }
+            for index in sample_indices
+        ]
+        feature_rows.append({
+            "feature": feature,
+            "mean_abs_contribution": round(float(np.mean(np.abs(contributions))), 4),
+            "points": points,
+        })
+
+    response = {
+        "model": "xgboost",
+        "method": "native XGBoost local contributions",
+        "unit": "percentage-point contribution to the modeled Republican-minus-Democratic shift",
+        "features": feature_rows,
+        "note": "Local model attribution, averaged across the 2016 and 2020 target models; not a causal effect.",
+    }
+    state[cache_key] = response
+    return response
+
+
+@app.get("/predict")
+def predict(
+    n_sim: int = Query(default=200, ge=10, le=1000),
+    model: Literal["xgboost", "random_forest", "ridge"] = Query(default="xgboost"),
+    seed: Optional[int] = Query(default=None, ge=0, le=2_147_483_647),
+):
+    if not state.get("data") or not state.get("models"):
+        raise HTTPException(503, "Server not ready")
+    return run_simulation(n_sim, model, state["models"], state["data"], seed)
