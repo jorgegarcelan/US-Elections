@@ -28,9 +28,16 @@ const newsreader = Newsreader({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"),
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "https://county-by-county.vercel.app"),
   title: { default: "County by County — U.S. Elections", template: "%s — County by County" },
   description: "Explore U.S. presidential elections, demographics and machine-learning predictions at county level.",
+  icons: {
+    icon: [
+      { url: "/favicon-32x32.png", sizes: "32x32", type: "image/png" },
+      { url: "/favicon.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
+  },
   openGraph: {
     title: "County by County — U.S. Elections",
     description: "Three elections, 3,107 counties and a model exploring how people and place shape the vote.",
